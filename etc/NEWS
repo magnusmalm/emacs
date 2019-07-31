@@ -535,6 +535,9 @@ be functions.
 *** 'cl-defstruct' has a new ':noinline' argument to prevent inlining
 its functions.
 
++++
+*** 'cl-defstruct' slots accept a ':documentation' property
+
 ---
 *** 'cl-values-list' will now signal an error if its argument isn't a list.
 
@@ -765,6 +768,12 @@ start of a sentence or at '(point-min)', else '@ref'.
 It now treats the optional 2nd argument to mean that the URL should be
 shown in the currently selected window.
 
+*** A new function, 'browse-url-add-buttons' can be used to add clickable
+links to most ordinary special-mode buffers that display text that
+have URLs embedded.  'browse-url-button-regexp' controls what's
+considered a button.
+
+*** A new variable, 'browse-url-secondary-browser-function', has been added.
 ** Comint
 
 +++
@@ -1000,6 +1009,14 @@ offers them to the user to open with 'browse-url'.
 This option controls whether and how to use Gnus search groups as
 'path:' search terms to 'notmuch'.
 
+---
++++ The buttons in the Gnus article buffer were formerly widgets
+(i.e., buttons from widget.el).  This has now changed, and they are
+now buttons (from button.el), and commands like 'TAB' now search for
+buttons instead of widgets.  There should be no user-visible changes,
+but out-of-tree code that relied on widgets being present might now
+fail.
+
 ** erc
 
 ---
@@ -1036,6 +1053,10 @@ has been executed.
 *** New option 'shr-discard-aria-hidden'.
 If set, shr will not render tags with attribute 'aria-hidden="true"'.
 This attribute is meant to tell screen readers to ignore a tag.
+
++++
+*** 'shr-external-browser' has been made into an obsolete alias
+of 'browse-url-secondary-browser-function'.
 
 ---
 *** 'shr-tag-ol' now respects the ordered list 'start' attribute.
@@ -1955,6 +1976,12 @@ valid event type.
 
 * Lisp Changes in Emacs 27.1
 
++++
+** Buttons (created with 'make-button' and related functions) can
+now use the 'button-data' property.  If present, the data in this
+property will be passed on to the 'action' function instead of the
+button itself in 'button-activate'.
+
 ** 'defcustom' now takes a ':local' keyword that can be either t or
 'permanent', which mean that the variable should be automatically
 buffer-local.  'permanent' also sets the variable's 'permanent-local'
@@ -2046,6 +2073,15 @@ TICKS is an integer and HZ is a positive integer denoting a clock
 frequency.  The old 'encode-time' API is still supported.
 
 +++
+*** A new package to parse ISO 8601 time, date, durations and
+intervals has been added.  The main function to use is
+'iso8601-parse', but there's also 'iso8601-parse-date',
+'iso8601-parse-time', 'iso8601-parse-duration' and
+'iso8601-parse-interval'.  All these functions return decoded time
+structures, except the final one, which returns three of them (start,
+end and duration).
+
++++
 *** 'time-add', 'time-subtract', and 'time-less-p' now accept
 infinities and NaNs too, and propagate them or return nil like
 floating-point operators do.
@@ -2058,6 +2094,25 @@ floating-point operators do.
 that acts like the '0' flag but also puts a '+' before nonnegative
 years containing more than four digits.  This is for compatibility
 with POSIX.1-2017.
+
++++
+*** To access (or alter) the elements a decoded time value, the
+'decoded-time-second', 'decoded-time-minute', 'decoded-time-hour',
+'decoded-time-day', 'decoded-time-month', 'decoded-time-year',
+'decoded-time-weekday', 'decoded-time-dst' and 'decoded-time-zone'
+accessors can be used.
+
+*** The new functions 'date-days-in-month' (which will say how many
+days there are in a month in a specific year), 'date-ordinal-to-time'
+(that computes the date of an ordinal day), 'decoded-time-add' for
+doing computations on a decoded time structure), 'make-decoded-time'
+(for making a decoded time structure with only the given keywords
+filled out), and 'encoded-time-set-defaults' (which fills in nil
+elements as if it's midnight January 1st, 1970) have been added.
+
+*** The new function `time-zone-format' has been added to format
+Emacs time zones (which are in seconds) according to many standards
+(i.e., "+01:00").
 
 ** 'define-minor-mode' automatically documents the meaning of ARG.
 
