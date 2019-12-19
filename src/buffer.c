@@ -133,6 +133,69 @@ CHECK_OVERLAY (Lisp_Object x)
 
 /* These setters are used only in this file, so they can be private.
    The public setters are inline functions defined in buffer.h.  */
+
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+static void
+bset_mc_real_fake_cursor (struct buffer *b, Lisp_Object val)
+{
+  b->mc_real_fake_cursor_ = val;
+}
+
+static void
+bset_mc_conf (struct buffer *b, Lisp_Object val)
+{
+  b->mc_conf_ = val;
+}
+
+static void
+bset_mc_inactive_windows (struct buffer *b, Lisp_Object val)
+{
+  b->mc_inactive_windows_ = val;
+}
+
+static void
+bset_crosshairs (struct buffer *b, Lisp_Object val)
+{
+  b->crosshairs_ = val;
+}
+
+static void
+bset_ch_horizontal_ruler (struct buffer *b, Lisp_Object val)
+{
+  b->ch_horizontal_ruler_ = val;
+}
+
+static void
+bset_ch_vertical_ruler (struct buffer *b, Lisp_Object val)
+{
+  b->ch_vertical_ruler_ = val;
+}
+
+static void
+bset_ch_inactive_windows (struct buffer *b, Lisp_Object val)
+{
+  b->ch_inactive_windows_ = val;
+}
+
+static void
+bset_fc_visible (struct buffer *b, Lisp_Object val)
+{
+  b->fc_visible_ = val;
+}
+
+static void
+bset_fc_inactive_windows (struct buffer *b, Lisp_Object val)
+{
+  b->fc_inactive_windows_ = val;
+}
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 static void
 bset_abbrev_mode (struct buffer *b, Lisp_Object val)
 {
@@ -5145,6 +5208,24 @@ init_buffer_once (void)
   bset_last_selected_window (&buffer_local_flags, make_fixnum (0));
 
   idx = 1;
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  XSETFASTINT (BVAR (&buffer_local_flags, mc_real_fake_cursor), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, mc_conf), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, mc_inactive_windows), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, crosshairs), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, ch_horizontal_ruler), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, ch_vertical_ruler), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, ch_inactive_windows), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, fc_visible), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, fc_inactive_windows), idx); ++idx;
+
+/* *************************************************************************** */
+
+
   XSETFASTINT (BVAR (&buffer_local_flags, mode_line_format), idx); ++idx;
   XSETFASTINT (BVAR (&buffer_local_flags, abbrev_mode), idx); ++idx;
   XSETFASTINT (BVAR (&buffer_local_flags, overwrite_mode), idx); ++idx;
@@ -5231,6 +5312,24 @@ init_buffer_once (void)
   /* Must do these before making the first buffer! */
 
   /* real setup is done in bindings.el */
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  bset_mc_real_fake_cursor (&buffer_defaults, Qhollow);
+  bset_mc_conf (&buffer_defaults, Qnil);
+  bset_mc_inactive_windows (&buffer_defaults, Qt);
+  bset_crosshairs (&buffer_defaults, Qnil);
+  bset_ch_horizontal_ruler (&buffer_defaults, Qt);
+  bset_ch_vertical_ruler (&buffer_defaults, Qt);
+  bset_ch_inactive_windows (&buffer_defaults, Qt);
+  bset_fc_visible (&buffer_defaults, Qnil);
+  bset_fc_inactive_windows (&buffer_defaults, Qt);
+
+/* *************************************************************************** */
+
+
   bset_mode_line_format (&buffer_defaults, build_pure_c_string ("%-"));
   bset_header_line_format (&buffer_defaults, Qnil);
   bset_abbrev_mode (&buffer_defaults, Qnil);
@@ -5461,6 +5560,51 @@ defvar_per_buffer (struct Lisp_Buffer_Objfwd *bo_fwd, const char *namestring,
 void
 syms_of_buffer (void)
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  DEFSYM (Qmc_real_fake_cursor, "mc-real-fake-cursor");
+  DEFVAR_PER_BUFFER ("mc-real-fake-cursor", &BVAR (current_buffer, mc_real_fake_cursor), Qnil,
+    doc: /* A bufer-local variable to set the cursor type of the real fake cursor. */);
+
+  DEFSYM (Qmc_conf, "mc-conf");
+  DEFVAR_PER_BUFFER ("mc-conf", &BVAR (current_buffer, mc_conf), Qnil,
+    doc: /* A bufer-local variable to store the value of the multiple cursors to be displayed
+during the next redisplay. */);
+
+  DEFSYM (Qmc_inactive_windows, "mc-inactive-windows");
+  DEFVAR_PER_BUFFER ("mc-inactive-windows", &BVAR (current_buffer, mc_inactive_windows), Qnil,
+    doc: /* When non-nil, draw multiple cursors in inactive windows. */);
+
+  DEFSYM (Qcrosshairs, "crosshairs");
+  DEFVAR_PER_BUFFER ("crosshairs", &BVAR (current_buffer, crosshairs), Qnil,
+    doc: /* A bufer-local variable to activate/deactivate crosshairs. */);
+
+  DEFSYM (Qch_horizontal_ruler, "ch-horizontal-ruler");
+  DEFVAR_PER_BUFFER ("ch-horizontal-ruler", &BVAR (current_buffer, ch_horizontal_ruler), Qnil,
+    doc: /* A bufer-local variable to activate/deactivate the crosshairs horizontal ruler. */);
+
+  DEFSYM (Qch_vertical_ruler, "ch-vertical-ruler");
+  DEFVAR_PER_BUFFER ("ch-vertical-ruler", &BVAR (current_buffer, ch_vertical_ruler), Qnil,
+    doc: /* A bufer-local variable to activate/deactivate the crosshairs vertical ruler. */);
+
+  DEFSYM (Qch_inactive_windows, "ch-inactive-windows");
+  DEFVAR_PER_BUFFER ("ch-inactive-windows", &BVAR (current_buffer, ch_inactive_windows), Qnil,
+    doc: /* When non-nil, draw crosshairs in inactive windows. */);
+
+  DEFSYM (Qfc_visible, "fc-visible");
+  DEFVAR_PER_BUFFER ("fc-visible", &BVAR (current_buffer, fc_visible), Qnil,
+    doc: /* A bufer-local variable to turn on/off the multiple cursors fill column. */);
+
+  DEFSYM (Qfc_visible_inactive_window, "fc-inactive-window");
+  DEFVAR_PER_BUFFER ("fc-inactive-windows", &BVAR (current_buffer, fc_inactive_windows), Qnil,
+    doc: /* When non-nil, draw multiple cursors fill column in inactive windows. */);
+
+/* *************************************************************************** */
+
+
   staticpro (&last_overlay_modification_hooks);
   last_overlay_modification_hooks = make_nil_vector (10);
 

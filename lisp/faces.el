@@ -2512,6 +2512,634 @@ non-nil."
   :group 'basic-faces
   :group 'display-fill-column-indicator)
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; begin MULTIPLE-CURSORS
+
+(defface +-debugging-face
+  '((t (:foreground "OrangeRed")))
+  "Face for `+-debugging-face'."
+  :group '+-mode)
+
+(defface +-special-character-face
+  '((t (:foreground "cyan")))
+  "Face for `+-special-character-face'."
+  :group '+-mode)
+
+(defface +-overlay-arrow-pre-zv-face
+  '((t (:foreground "red")))
+  "Face for `+-overlay-arrow-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-overlay-arrow-inactive-pre-zv-face
+  '((t (:foreground "DarkSlateGrey")))
+  "Face for `+-overlay-arrow-inactive-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-overlay-arrow-hscl-pre-zv-face
+  '((t (:foreground "DarkGreen")))
+  "Face for `+-overlay-arrow-hscl-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-overlay-arrow-hscl-inactive-pre-zv-face
+  '((t (:foreground "DarkSlateGrey")))
+  "Face for `+-overlay-arrow-hscl-inactive-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-real-fake-cursor-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "cyan" :background "DarkBlue")
+    (((class color) (min-colors 88) (background light))
+     :foreground "magenta" :background "LightSkyBlue")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "cyan" :background "DarkBlue")
+    (((class color) (min-colors 16) (background light))
+     :foreground "magenta" :background "LightSkyBlue")
+    (((class color) (min-colors 8))
+     :foreground "white" :background "blue")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink" :background "gray"))
+  "Face for `+-real-fake-cursor-pre-zv-face'.
+As to a hollow style cursor, the :foreground parameter is used for the border and
+the :background parameter is used for the inner filled shading.  The character
+retains its own foreground color and is unaffected by this particular face."
+  :group '+-mode)
+
+(defface +-real-fake-cursor-inactive-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "#ff00ff" :background "ForestGreen")
+    (((class color) (min-colors 88) (background light))
+     :foreground "OrangeRed" :background "grey70")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "#ff00ff" :background "ForestGreen")
+    (((class color) (min-colors 16) (background light))
+     :foreground "OrangeRed" :background "grey70")
+    (((class color) (min-colors 8))
+     :foreground "white" :background "blue")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink" :background "gray"))
+  "Face for `+-real-fake-cursor-inactive-pre-zv-face'.
+As to a hollow style cursor, the :foreground parameter is used for the border and
+the :background parameter is used for the inner filled shading.  The character
+retains its own foreground color and is unaffected by this particular face."
+  :group '+-mode)
+
+(defface +-real-fake-cursor-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "red" :background "DarkBlue")
+    (((class color) (min-colors 88) (background light))
+     :foreground "cyan" :background "LightSkyBlue")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "red" :background "DarkBlue")
+    (((class color) (min-colors 16) (background light))
+     :foreground "cyan" :background "LightSkyBlue")
+    (((class color) (min-colors 8))
+     :foreground "white" :background "blue")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink" :background "gray"))
+  "Face for `+-real-fake-cursor-at-zv-face'.
+As to a hollow style cursor, the :foreground parameter is used for the border and
+the :background parameter is used for the inner filled shading.  The character
+retains its own foreground color and is unaffected by this particular face."
+  :group '+-mode)
+
+(defface +-real-fake-cursor-inactive-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "blue" :background "ForestGreen")
+    (((class color) (min-colors 88) (background light))
+     :foreground "blue" :background "grey70")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "blue" :background "ForestGreen")
+    (((class color) (min-colors 16) (background light))
+     :foreground "blue" :background "grey70")
+    (((class color) (min-colors 8))
+     :foreground "white" :background "blue")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink" :background "gray"))
+  "Face for `+-real-fake-cursor-inactive-at-zv-face'.
+As to a hollow style cursor, the :foreground parameter is used for the border and
+the :background parameter is used for the inner filled shading.  The character
+retains its own foreground color and is unaffected by this particular face."
+  :group '+-modeo)
+
+(defface +-real-fake-cursor-at-region-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "chocolate4" :background "#8b795e")
+    (((class color) (min-colors 88) (background light))
+     :foreground "pink" :background "black")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "chocolate4" :background "#8b795e")
+    (((class color) (min-colors 16) (background light))
+     :foreground "pink" :background "black")
+    (((class color) (min-colors 8))
+     :foreground "white" :background "blue")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink" :background "gray"))
+  "Face for `+-real-fake-cursor-at-region-pre-zv-face'.
+As to a hollow style cursor, the `:foreground` parameter is used for the inner
+filled shading when `cursor_glyph->charpos` is _at_ the region beginning; the
+`:background` parameter is used for the inner filled shading when
+`cursor_glyph->charpos` is _at_ the region end.  The character retains its own
+foreground color and is unaffected by this face."
+  :group '+-mode)
+
+(defface +-real-fake-cursor-in-region-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "orange")
+    (((class color) (min-colors 88) (background light))
+     :foreground "purple")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "orange")
+    (((class color) (min-colors 16) (background light))
+     :foreground "purple")
+    (((class color) (min-colors 8))
+     :foreground "gray50")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "purple"))
+  "Face for `+-real-fake-cursor-in-region-pre-zv-face'.
+As to a hollow style cursor, the `:foreground` parameter is used for the inner
+filled shading when `cursor_glyph->charpos` is _in_ the region beginning.  The
+character retains its own foreground color and is unaffected by this face."
+  :group '+-mode)
+
+(defface +-bar-pre-zv-face
+  '((t (:foreground "magenta1")))
+  "Face for `+-bar-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-bar-at-zv-face
+  '((t (:foreground "yellow")))
+  "Face for `+-bar-at-zv-face'."
+  :group '+-mode)
+
+(defface +-bar-post-zv-face
+  '((t (:foreground "magenta4")))
+  "Face for `+-bar-post-zv-face'."
+  :group '+-mode)
+
+(defface +-reversed-bar-pre-zv-face
+  '((t (:foreground "cyan1")))
+  "Face for `+-reversed-bar-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-reversed-bar-at-zv-face
+  '((t (:foreground "chartreuse")))
+  "Face for `+-reversed-bar-at-zv-face'."
+  :group '+-mode)
+
+(defface +-reversed-bar-post-zv-face
+  '((t (:foreground "cyan4")))
+  "Face for `+-reversed-bar-post-zv-face'."
+  :group '+-mode)
+
+(defface +-even-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "yellow")
+    (((class color) (min-colors 88) (background light))
+     :foreground "cyan1")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "yellow")
+    (((class color) (min-colors 16) (background light))
+     :foreground "cyan1")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-even-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-even-inactive-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "#eee8aa")
+    (((class color) (min-colors 88) (background light))
+     :foreground "blue1")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "#eee8aa")
+    (((class color) (min-colors 16) (background light))
+     :foreground "blue1")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-even-inactive-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-even-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "DeepPink1")
+    (((class color) (min-colors 88) (background light))
+     :foreground "DeepPink1")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "DeepPink1")
+    (((class color) (min-colors 16) (background light))
+     :foreground "DeepPink1")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-even-at-zv-face'."
+  :group '+-mode)
+
+(defface +-even-inactive-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "DeepPink4")
+    (((class color) (min-colors 88) (background light))
+     :foreground "DeepPink4")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "DeepPink4")
+    (((class color) (min-colors 16) (background light))
+     :foreground "DeepPink4")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-even-inactive-at-zv-face'."
+  :group '+-mode)
+
+(defface +-even-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "DarkOliveGreen3")
+    (((class color) (min-colors 88) (background light))
+     :foreground "cyan4")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "DarkOliveGreen3")
+    (((class color) (min-colors 16) (background light))
+     :foreground "cyan4")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-even-post-zv-face'."
+  :group '+-mode)
+
+(defface +-even-inactive-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "DarkOliveGreen4")
+    (((class color) (min-colors 88) (background light))
+     :foreground "RoyalBlue")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "DarkOliveGreen4")
+    (((class color) (min-colors 16) (background light))
+     :foreground "RoyalBlue")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-even-inactive-post-zv-face'."
+  :group '+-mode)
+
+(defface +-odd-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "red1")
+    (((class color) (min-colors 88) (background light))
+     :foreground "red1")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "red1")
+    (((class color) (min-colors 16) (background light))
+     :foreground "red1")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-odd-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-odd-inactive-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "#ff6347")
+    (((class color) (min-colors 88) (background light))
+     :foreground "#ff6347")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "#ff6347")
+    (((class color) (min-colors 16) (background light))
+     :foreground "#ff6347")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-odd-inactive-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-odd-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "SteelBlue3")
+    (((class color) (min-colors 88) (background light))
+     :foreground "SteelBlue3")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "SteelBlue3")
+    (((class color) (min-colors 16) (background light))
+     :foreground "SteelBlue3")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-odd-at-zv-face'."
+  :group '+-mode)
+
+(defface +-odd-inactive-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "SteelBlue4")
+    (((class color) (min-colors 88) (background light))
+     :foreground "SteelBlue4")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "SteelBlue4")
+    (((class color) (min-colors 16) (background light))
+     :foreground "SteelBlue4")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-odd-inactive-at-zv-face'."
+  :group '+-mode)
+
+(defface +-odd-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "sienna1")
+    (((class color) (min-colors 88) (background light))
+     :foreground "DarkSalmon")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "sienna1")
+    (((class color) (min-colors 16) (background light))
+     :foreground "DarkSalmon")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-odd-post-zv-face'."
+  :group '+-mode)
+
+(defface +-odd-inactive-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "sienna4")
+    (((class color) (min-colors 88) (background light))
+     :foreground "sienna4")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "sienna4")
+    (((class color) (min-colors 16) (background light))
+     :foreground "sienna4")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-odd-inactive-post-zv-face'."
+  :group '+-mode)
+
+(defface +-post-fill-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "green1")
+    (((class color) (min-colors 88) (background light))
+     :foreground "green1")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "green1")
+    (((class color) (min-colors 16) (background light))
+     :foreground "green1")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-post-fill-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-post-fill-inactive-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "green4")
+    (((class color) (min-colors 88) (background light))
+     :foreground "green4")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "green4")
+    (((class color) (min-colors 16) (background light))
+     :foreground "green4")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-post-fill-inactive-pre-zv-face'."
+  :group '+-mode)
+
+(defface +-post-fill-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "purple3")
+    (((class color) (min-colors 88) (background light))
+     :foreground "red1")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "purple3")
+    (((class color) (min-colors 16) (background light))
+     :foreground "red1")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-post-fill-at-zv-face'."
+  :group '+-mode)
+
+(defface +-post-fill-inactive-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "purple4")
+    (((class color) (min-colors 88) (background light))
+     :foreground "red4")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "purple4")
+    (((class color) (min-colors 16) (background light))
+     :foreground "red4")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-post-fill-inactive-at-zv-face'."
+  :group '+-mode)
+
+(defface +-post-fill-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "PaleGreen3")
+    (((class color) (min-colors 88) (background light))
+     :foreground "PaleGreen3")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "PaleGreen3")
+    (((class color) (min-colors 16) (background light))
+     :foreground "PaleGreen3")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-post-fill-post-zv-face'."
+  :group '+-mode)
+
+(defface +-post-fill-inactive-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "PaleGreen4")
+    (((class color) (min-colors 88) (background light))
+     :foreground "DarkOliveGreen")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "PaleGreen4")
+    (((class color) (min-colors 16) (background light))
+     :foreground "DarkOliveGreen")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `+-post-fill-inactive-post-zv-face'."
+  :group '+-mode)
+
+(defface fc-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "grey15")
+    (((class color) (min-colors 88) (background light))
+     :foreground "grey15")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "grey15")
+    (((class color) (min-colors 16) (background light))
+     :foreground "grey15")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `fc-pre-zv-face' in the active window."
+  :group '+-mode)
+
+(defface fc-inactive-pre-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "blue")
+    (((class color) (min-colors 88) (background light))
+     :foreground "grey60")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "blue")
+    (((class color) (min-colors 16) (background light))
+     :foreground "grey60")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `fc-inactive-pre-zv-face' in the inactive window."
+  :group '+-mode)
+
+(defface fc-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "OrangeRed")
+    (((class color) (min-colors 88) (background light))
+     :foreground "OrangeRed")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "OrangeRed")
+    (((class color) (min-colors 16) (background light))
+     :foreground "OrangeRed")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `fc-at-zv-face' in the active window."
+  :group '+-mode)
+
+(defface fc-inactive-at-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "yellow")
+    (((class color) (min-colors 88) (background light))
+     :foreground "yellow")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "yellow")
+    (((class color) (min-colors 16) (background light))
+     :foreground "yellow")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `fc-inactive-at-zv-face' in the inactive window."
+  :group '+-mode)
+
+(defface fc-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "gray40")
+    (((class color) (min-colors 88) (background light))
+     :foreground "grey55")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "gray40")
+    (((class color) (min-colors 16) (background light))
+     :foreground "grey55")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `fc-post-zv-face' in the active window."
+  :group '+-mode)
+
+(defface fc-inactive-post-zv-face
+  '((((class color) (min-colors 88) (background dark))
+     :foreground "DarkBlue")
+    (((class color) (min-colors 88) (background light))
+     :foreground "grey85")
+    (((class color) (min-colors 16) (background dark))
+     :foreground "DarkBlue")
+    (((class color) (min-colors 16) (background light))
+     :foreground "grey85")
+    (((class color) (min-colors 8))
+     :foreground "white")
+    (((type tty) (class mono))
+     :inverse-video t)
+    (t :foreground "pink"))
+  "Face for `fc-inactive-post-zv-face' in the inactive window."
+  :group '+-mode)
+
+(defface fc-opoint-pre-zv-face
+  '((t (:foreground "magenta1")))
+  "Face for `fc-opoint-pre-zv-face' in the active window."
+  :group '+-mode)
+
+(defface fc-opoint-inactive-pre-zv-face
+  '((t (:foreground "magenta4")))
+  "Face for `fc-opoint-inactive-pre-zv-face' in the inactive window."
+  :group '+-mode)
+
+(defface fc-opoint-at-zv-face
+  '((t (:foreground "cyan1")))
+  "Face for `fc-opoint-at-zv-face' in the active window."
+  :group '+-mode)
+
+(defface fc-opoint-inactive-at-zv-face
+  '((t (:foreground "cyan4")))
+  "Face for `fc-opoint-inactive-at-zv-face' in the inactive window."
+  :group '+-mode)
+
+(defface fc-opoint-post-zv-face
+  '((t (:foreground "purple3")))
+  "Face for `fc-opoint-post-zv-face' in the active window."
+  :group '+-mode)
+
+(defface fc-opoint-inactive-post-zv-face
+  '((t (:foreground "purple4")))
+  "Face for `fc-opoint-inactive-post-zv-face' in the inactive window."
+  :group '+-mode)
+
+;;; end MULTIPLE-CURSORS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
 (defface escape-glyph
   '((((background dark)) :foreground "cyan")
     ;; See the comment in minibuffer-prompt for

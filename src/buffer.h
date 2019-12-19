@@ -740,6 +740,40 @@ struct buffer
      in the display of this buffer.  */
   Lisp_Object extra_line_spacing_;
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  /* The cursor type of the real fake cursor. */
+  Lisp_Object mc_real_fake_cursor_;
+
+  /* The name of list used by multiple cursors for next redisplay. */
+  Lisp_Object mc_conf_;
+
+  /* Whether to draw multiple cursors in inactive windows. */
+  Lisp_Object mc_inactive_windows_;
+
+  /* The name of the buffer-local variable. */
+  Lisp_Object crosshairs_;
+
+  /* The name of the crosshairs horizontal ruler. */
+  Lisp_Object ch_horizontal_ruler_;
+
+  /* The name of the crosshairs vertical ruler. */
+  Lisp_Object ch_vertical_ruler_;
+
+  /* Whether to draw crosshairs in inactive windows. */
+  Lisp_Object ch_inactive_windows_;
+
+  /* The name of the buffer-local variable. */
+  Lisp_Object fc_visible_;
+
+  /* Whether to draw multiple cursors fill column in inactive windows. */
+  Lisp_Object fc_inactive_windows_;
+
+/* *************************************************************************** */
+
+
   /* Cursor type to display in non-selected windows.
      t means to use hollow box cursor.
      See `cursor-type' for other values.  */
@@ -791,13 +825,20 @@ struct buffer
      an indirect buffer since it counts as its base buffer.  */
   int window_count;
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
   /* A non-zero value in slot IDX means that per-buffer variable
      with index IDX has a local value in this buffer.  The index IDX
      for a buffer-local variable is stored in that variable's slot
      in buffer_local_flags as a Lisp integer.  If the index is -1,
      this means the variable is always local in all buffers.  */
-#define MAX_PER_BUFFER_VARS 50
+#define MAX_PER_BUFFER_VARS 60
   char local_flags[MAX_PER_BUFFER_VARS];
+
+/* *************************************************************************** */
+
 
   /* Set to the modtime of the visited file when read or written.
      modtime.tv_nsec == NONEXISTENT_MODTIME_NSECS means
@@ -907,6 +948,69 @@ XBUFFER (Lisp_Object a)
 /* Most code should use these functions to set Lisp fields in struct
    buffer.  (Some setters that are private to a single .c file are
    defined as static in those files.)  */
+
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+INLINE void
+bset_blv_mc_real_fake_cursor (struct buffer *b, Lisp_Object val)
+{
+  b->mc_real_fake_cursor_ = val;
+}
+
+INLINE void
+bset_blv_mc_conf (struct buffer *b, Lisp_Object val)
+{
+  b->mc_conf_ = val;
+}
+
+INLINE void
+bset_blv_mc_inactive_windows (struct buffer *b, Lisp_Object val)
+{
+  b->mc_inactive_windows_ = val;
+}
+
+INLINE void
+bset_blv_crosshairs (struct buffer *b, Lisp_Object val)
+{
+  b->crosshairs_ = val;
+}
+
+INLINE void
+bset_blv_ch_horizontal_ruler (struct buffer *b, Lisp_Object val)
+{
+  b->ch_horizontal_ruler_ = val;
+}
+
+INLINE void
+bset_blv_ch_vertical_ruler (struct buffer *b, Lisp_Object val)
+{
+  b->ch_vertical_ruler_ = val;
+}
+
+INLINE void
+bset_blv_ch_inactive_windows (struct buffer *b, Lisp_Object val)
+{
+  b->ch_inactive_windows_ = val;
+}
+
+INLINE void
+bset_blv_fc_visible (struct buffer *b, Lisp_Object val)
+{
+  b->fc_visible_ = val;
+}
+
+INLINE void
+bset_blv_fc_inactive_windows (struct buffer *b, Lisp_Object val)
+{
+  b->fc_inactive_windows_ = val;
+}
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 INLINE void
 bset_bidi_paragraph_direction (struct buffer *b, Lisp_Object val)
 {

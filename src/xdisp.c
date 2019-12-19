@@ -962,6 +962,4892 @@ static void show_mouse_face (Mouse_HLInfo *, enum draw_glyphs_face);
 static bool coords_in_mouse_face_p (struct window *, int, int);
 
 
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+/* MULTIPLE-CURSORS:  Emacs Bug #22873 (feature request)
+
+  CROSSHAIRS:  Emacs Bug #17684 (feature request)
+
+
+VERSION: 022.005 [11/17/2019]
+
+
+CHANGELOG:
+
+- Fixed a bug affecting the NS port relating to redrawing fake cursors on left/
+  right overwritten glyphs.  When `mc_update_window_erase' calls `mc_erase_cursor',
+  the window cache of fake cursors has already been updated even though the
+  window contents have not.  As such, it is necessary to use the `old_cache'
+  (saved fake cursor cache from the previous command loop) to determine which
+  fake cursors must be redrawn.  [Prior to this bug fix, the updated cache of
+  fake cursors (i.e., `w->mc_matrix`) was used when determining which fake
+  cursors to redraw on the left/right overwritten glyphs.]  As to the W32 port
+  and the X11 port, support for redrawing fake cursors on left/right overwritten
+  glyphs is still on the "todo list".  However, `mc_w32_draw_glyph_string' and
+  `mc_x_draw_glyph_string' have now been updated to include an extra argument
+  for the `mc_matrix`.
+
+- Miscellaneous tidying-up of code.
+
+
+VIDEOS:
+
+w32:  https://youtu.be/r3BdJVlsAnQ
+
+ns:  https://youtu.be/bc1h8jtbXmw
+
+x11:  https://youtu.be/aCIFhD2Xz5s
+
+
+SCREENSHOTS:
+
+https://www.lawlist.com/images/22873_17684_light_dark_backgrounds.png
+
+
+SETUP:
+
+Step 1:  git clone -b master git://git.sv.gnu.org/emacs.git
+
+Step 2:  In the new emacs folder, go back to an Emacs version from 07/14/2019:
+
+git reset --hard ac57c5093829ee09084c562bbbc1c412179be13d
+
+Step 3:  From within the new emacs folder created in Step 1, apply the patch:
+
+git apply /path/to/the/patch.diff
+
+Step 4:  ./autogen.sh
+
+Step 5:  ./configure ... [your custom options]
+
+Step 6:  make
+
+Step 7:  make install
+
+
+USAGE:
+
+- For a minimal working example of built-in fake cursors, type:  M-x mc-test
+
+  ;;; TURN ON FAKE CURSORS (buffer position, cursor-type, cursor color):
+
+  (setq mc-conf '((1 "hbar" "magenta")
+                  (2 "bar" "purple")
+                  (3 "box" "#00FF00")
+                  (4 "hollow" "#0000FF")
+                  (5 ("hbar" 3) [1.0 0.0 1.0])
+                  (6 ("bar" 3) [0.0 1.0 1.0])
+                  (7 "framed" "OrangeRed")))
+
+  ;;; TURN OFF FAKE CURSORS:
+
+  (setq mc-conf nil)
+
+- To try out both the crosshairs feature and the visible fill column indicator
+  feature, type:  M-x +-mode
+
+- To try out just the visible fill column indicator feature, type:  M-x fc-mode
+
+- To try out built-in fake cursors with Magnar Sveen's multiple-cursors package,
+  that package must be installed.  If the multiple-cursors package is already
+  installed, then just (require 'crosshairs) and `crosshairs.el` will redefine a
+  few of the multiple-cursors functions and set up a few keyboard shortcuts.
+  If the multiple-cursors package by Magnar Sveen is not already installed, then
+  here are two easy ways to install that package:
+
+  Type:  M-x mc-install
+
+  OR, evaluate the following snippet:
+
+  (progn
+    (require 'package)
+    (add-to-list 'package-archives '("melpa" . "http://melpa.milkbox.net/packages/") t)
+    (package-initialize)
+    (package-refresh-contents)
+    (package-install 'multiple-cursors)
+    (mc/built-in-cursors))
+
+
+NOTES:
+
+- Our journey begins at the outset of `update_window' when
+  `mc_update_window_dryrun' performs a `!draw_p` simulation to create a new
+  cache of fake cursors that are stored in the `w->mc_matrix`.  The cache of
+  fake cursors from the previous redisplay is copied to a temporary `mc_matrix`
+  under the name of `old_matrix`.  `mc_update_text_area' (used for `!draw_p` /
+  `draw_p` situations) calls `mc_draw_glyphs' (writes glyphs to the glass)
+  followed by `mc_draw_row' (writes fake cursors to the glass immediately
+  thereafter).  At the tail end of `mc_update_window_dryrun',
+  `mc_update_window_erase' compares the new `w->mc_matrix` with the `old_matrix`
+  to determine which fake cursors are the same -- setting the `same_p` boolean
+  struct member accordingly for each applicable fake cursor within the
+  `w->mc_matrix`.  All fake cursors in the `old_matrix` that are `!same_p` get
+  erased at this juncture.  [Fn 1.]  After the dryrun is complete,
+  `update_window' does the real thing -- `draw_p`.  As to the `from_where`
+  situations of SKIPPED, POST_CHANGED, UNCHANGED, and SET_CURSOR_TWO,
+  `mc_helper' compares the incoming tentative fake cursor with the
+  `w->mc_matrix` to see if it has previously been marked as `same_p` -- if it is
+  `!same_p`, then the fake cursor is drawn and we `return`.  Fake cursors that
+  have a `cursor_type` of MC_LEFT_FRINGE_BITMAP or MC_RIGHT_FRINGE_BITMAP are
+  always reset even if they are `same_p`.  As to the `from_where` situations of
+  SCRIBE_ONE, SCRIBE_TWO, SCRIBE_THREE, and NOWHERE, `mc_helper' always causes
+  fake cursors to be drawn (because new glyphs were written to the glass, or the
+  area to the right of the display line was cleared) and we `return`.
+
+. Fn. 1:  Even though writing new glyphs to the glass (SCRIBE_ONE, SCRIBE_TWO,
+  and SCRIBE_THREE) would erase fake cursors within those boundaries, it is
+  still necessary to erase `!same_p` fake cursors prior thereto.  This is
+  because `scrolling_window' occurs before new glyphs are written and
+  `rif->scroll_run_hook' may copy one or more rows to other areas of the glass.
+  It is not worth the effort to programmatically track both the _copied_ fake
+  cursors and the _original_ fake cursors from the previous redisplay cycle,
+  whose glyphs may remain where they are in the current redisplay cycle because
+  they satisfy the `GLYPH_EQUAL_P' test.
+
+- The rest of our journey takes place wherever `draw_glyphs' would ordinarily be
+  called, excluding `update_text_area'.  If features 17684/22873 are active,
+  `mc_redraw_row' calls `mc_draw_glyphs' (writes glyphs to the glass) and fake
+  cursors are written to the glass immediately thereafter (if the coordinates
+  coincide with prerecorded data in the `w->mc_matrix`).  The functions
+  containing the aforementioned calls are:
+  . `gui_insert_glyphs'
+  . `gui_fix_overlapping_area'
+  . `draw_row_with_mouse_face'
+  . `expose_area'
+  . `expose_line'
+  . `redraw_overlapped_rows' [which has been incorporated into `update_window']
+
+- As to `mc_scrolling_window', it would appear that there is no tangible
+  benefit to rotating the current/prospective cache of fake cursors to compare
+  the data before removing the fake cursors.  When scrolling the display, only
+  _some_ lines are copied to new locations.  Areas that are not overwritten may
+  have fake cursors and those may not necessarily be removed if desired/current
+  matrix glyphs are equal.  The test for `GLYPH_EQUAL_P' does not take into
+  consideration the existence of a fake cursor, and the glyph (with a fake
+  cursor) may not be updated as a result thereof.  As to lines that are not
+  copied, portions may be updated and fake cursors would be removed thereby.
+  `mc_rotate_matrix' and `mc_reverse_vpos' were removed with patch v. 022.002.
+
+- NS:  As of 09/28/2018 (7946445962372c4255180af45cb7c857f1b0b5fa), the NS port
+  no longer does anything useful during `update_window' except mark dirty
+  rectangles.  All drawing is now done when the MacOS calls `drawRect', which in
+  turn calls `expose_frame'.
+
+
+TODO:
+
+- When an idle-timer fires and point is at the end of a horizontally scrolled
+  line in a narrow window, the temporary horizontal scroll is canceled.  Create
+  a minimal working example and file a bug report.
+
+  (progn
+    (defun test ()
+    (interactive)
+      (let ((ov (make-overlay (point) (1+ (point)) nil t t)))
+        (overlay-put ov 'face '(:foreground "red"))))
+    (global-set-key [f5] 'test)
+    (split-window-horizontally)
+    (switch-to-buffer (get-buffer-create "foo"))
+    (setq bidi-display-reordering nil)
+    (setq-local auto-hscroll-mode 'current-line)
+    (dotimes (i 80)
+      (insert (char-to-string (+ 65 i)))))
+
+- `ns_draw_window_cursor' calls `ns_clip_to_rect', which does _not_ take
+  `row->clip` into consideration when drawing cursors with `NSRectFill'.  When
+  it comes time to draw glyphs on top of the box/hollow family of cursors,
+  `row->clip` is taken into consideration by `get_glyph_string_clip'.  Fake
+  cursors can be drawn even though the glyphs cannot, resulting in hollow/box
+  family of cursors without text.  The issue can be reproduced with M-x mc-test.
+  [A temporary workaround is to disable `row->clip` while drawing the glyphs.]
+  https://lists.gnu.org/archive/html/emacs-devel/2019-04/msg00009.html
+
+- Deal with left/right overwritten glyphs in the w32 and X ports of Emacs.
+
+- There is a bug affecting the recorded `w->mc.lnum_pixel_width` that is
+  observable when not running under gdb, but disappears when running under gdb.
+  While viewing a folded org-mode buffer, the non-gdb instance had a visible
+  line number pixel-width of 44, but Emacs treated it as fluctuating between
+  44 and 55 as the cursor was moved to the end of line.  In the gdb instance,
+  the visible line number pixel width was 55 with no fluctuation under the same
+  conditions as the non-gdb instance.  This appears to be a different bug than
+  bug#32177 (current line number shifts one column to the left) because the line
+  number of the current line does not shift left, and changing the bidi settings
+  did not correct the issue.
+
+- The current test for `auto_hscroll_mode_p' only looks for `current_line` and
+  all five related tests are based upon that assumption, which may not be true.
+
+- Multiple Cursors:  If point is in the middle of a composite character, then
+  select a fully composed character so that the fake cursor is visible.
+
+- Implement functionality similar to the Lisp multiple-cursors by Magnar Sveen.
+
+- Follow up with the Emacs team re bug#32177; i.e., (Current line number shifts
+  one column to the left.)
+
+- Follow up with the Emacs team re bug#32060; i.e., Horizontal Scrolling
+  (Current Line):  Wrong line gets h-scrolled.
+
+- Determine if bug #28936 needs to be fixed and help the Emacs team re same.
+
+- Is there any additional meaningful optimization that can be added to the
+  three calls of `mc_pre_scroll_clean'?
+
+- There is a bug affecting an older version of Emacs for the NS port that causes
+  partial line flickering when the same characters are grouped together (;;;;;;)
+  and MC_GLYPHLESS cursors are above or below -- having the same background color
+  as the frame; e.g., black on black (used to erase a glyphless cursor).  The
+  partial flickering is only noticeable with rapid fire; e.g., holding down the
+  right/left arrow key.  When changing the color of the glyphless cursor, the
+  issue is not present.  [@lawlist has verified that the X and HPOS coordinates
+  are accurate.]
+
+
+DEBUGGING:
+
+xdisp.c:  XChar2b => unsigned
+
+nsterm.m:  XRectangle => const Emacs_Rectangle
+
+w32term.c:  XGCValues => Emacs_GC (which has no `font` struct member).
+            mask => The master branch no longer uses GCFont as a component.
+
+ns_focus + ns_clip_to_row => ns_clip_to_rect [BOOL ... struct frame *, NSRect *, int)
+
+ns_unfocus => ns_reset_clipping
+
+make_save_ptr => make_mint_ptr
+
+row->glyphs[TEXT_AREA][hpos].pixel_width
+
+w->current_matrix->rows[2]->glyphs[TEXT_AREA][hpos].pixel_width
+
+w->current_matrix->rows[2].enabled_p
+
+w->current_matrix->rows[2].used[TEXT_AREA]
+
+RANGED_INTEGERP => RANGED_FIXNUMP
+
+TYPE_RANGED_INTEGERP => TYPE_RANGED_FIXNUMP
+
+make_number => make_fixnum
+
+XINT => XFIXNUM
+
+XFASTINT => XFIXNAT
+
+struct frame *f = XFRAME (w->frame);
+  OR
+struct frame *f = XFRAME (WINDOW_FRAME (w));
+
+Lisp_Object string = Fprin1_to_string (i_store, Qnil);
+char *char_string = SSDATA (string);
+fprintf (stderr, "i_store:  %s\n", char_string);
+
+char *w_contents = (BUFFERP (w->contents) && STRINGP (BVAR (XBUFFER (w->contents), name)))
+                   ? SSDATA (BVAR (XBUFFER (w->contents), name))
+                   : "nil";
+fprintf (stderr, "\nBuffer (%s)\n", w_contents);
+
+struct face *face = ...
+Lisp_Object foreground = face->lface[LFACE_FOREGROUND_INDEX];
+Lisp_Object background = face->lface[LFACE_BACKGROUND_INDEX];
+fprintf (stderr, "\nforeground (%s) | background (%s)\n",
+                 (!NILP (foreground) ? SSDATA (foreground) : "NILP"),
+                 (!NILP (background) ? SSDATA (background) : "NILP"));
+
+fprintf (stderr, "My lisp object:  %s\n", SSDATA (Fchar_to_string (make_fixnum (101))));
+
+fprintf (stderr, "string: %s | int: %d\n", "foo", 69);
+
+if (BUFFERP (w->contents) && STRINGP (BVAR (XBUFFER (w->contents), name)))
+  fprintf (stderr, "ns_update_window_end:  %s\n", SSDATA (BVAR (XBUFFER (w->contents), name)));
+
+eassert (BUF_BEG (b) <= charpos && charpos <= BUF_Z (b));
+bool barf_crash = (BUF_BEG (b) <= charpos && charpos <= BUF_Z (b)) ? false : true; */
+
+#include <time.h>
+#include <ftoastr.h>
+
+bool mc_stderr_p = false;
+
+#ifdef HAVE_NTGUI
+#define MC_OPTIONAL_HDC(hdc)  HDC hdc,
+#define MC_DECLARE_HDC(hdc)   HDC hdc;
+#define MC_ALLOCATE_HDC(hdc, f) hdc = get_frame_dc ((f))
+#define MC_RELEASE_HDC(hdc, f)  release_frame_dc ((f), (hdc))
+#endif
+
+#ifndef MC_OPTIONAL_HDC
+#define MC_OPTIONAL_HDC(hdc)
+#define MC_DECLARE_HDC(hdc)
+#define MC_ALLOCATE_HDC(hdc, f)
+#define MC_RELEASE_HDC(hdc, f)
+#endif
+
+static int left_overwritten (struct glyph_string *);
+static int right_overwritten (struct glyph_string *);
+static int left_overwriting (struct glyph_string *);
+static int right_overwriting (struct glyph_string *);
+static void append_glyph_string (struct glyph_string **, struct glyph_string **,
+                                 struct glyph_string *);
+static void prepend_glyph_string_lists (struct glyph_string **, struct glyph_string **,
+                                        struct glyph_string *, struct glyph_string *);
+static void append_glyph_string_lists (struct glyph_string **, struct glyph_string **,
+                                       struct glyph_string *, struct glyph_string *);
+static void init_glyph_string (struct glyph_string *, MC_OPTIONAL_HDC (hdc) unsigned *,
+                               struct window *, struct glyph_row *,
+                               enum glyph_row_area, int, enum draw_glyphs_face);
+static void compute_overhangs_and_x (struct glyph_string *, int, bool);
+static struct glyph_string * glyph_string_containing_background_width (struct glyph_string *);
+static void set_glyph_string_background_width (struct glyph_string *, int, int);
+static int fill_glyph_string (struct glyph_string *, int, int, int, int);
+static int fill_gstring_glyph_string (struct glyph_string *, int, int, int, int);
+static int fill_composite_glyph_string (struct glyph_string *, struct face *, int);
+static int fill_stretch_glyph_string (struct glyph_string *, int, int);
+static void fill_image_glyph_string (struct glyph_string *);
+static int fill_glyphless_glyph_string (struct glyph_string *, int, int, int, int);
+
+#ifdef HAVE_NTGUI
+#define MC_INIT_GLYPH_STRING(s, char2b, w, row, area, start, hl) \
+  init_glyph_string (s, hdc, char2b, w, row, area, start, hl)
+#else
+#define MC_INIT_GLYPH_STRING(s, char2b, w, row, area, start, hl) \
+  init_glyph_string (s, char2b, w, row, area, start, hl)
+#endif
+
+#define MC_BUILD_STRETCH_GLYPH_STRING(START, END, HEAD, TAIL, HL, X, LAST_X)   \
+     do									    \
+       {								    \
+	 s = alloca (sizeof *s);					    \
+	 MC_INIT_GLYPH_STRING (s, NULL, w, row, area, START, HL);		    \
+	 START = fill_stretch_glyph_string (s, START, END);                 \
+	 append_glyph_string (&HEAD, &TAIL, s);				    \
+         s->x = (X);							    \
+       }								    \
+     while (false)
+
+#define MC_BUILD_IMAGE_GLYPH_STRING(START, END, HEAD, TAIL, HL, X, LAST_X) \
+     do									\
+       {								\
+	 s = alloca (sizeof *s);					\
+	 MC_INIT_GLYPH_STRING (s, NULL, w, row, area, START, HL);		\
+	 fill_image_glyph_string (s);					\
+	 append_glyph_string (&HEAD, &TAIL, s);				\
+	 ++START;							\
+         s->x = (X);							\
+       }								\
+     while (false)
+
+#ifndef HAVE_XWIDGETS
+# define MC_BUILD_XWIDGET_GLYPH_STRING(START, END, HEAD, TAIL, HL, X, LAST_X) \
+     eassume (false)
+#else
+# define MC_BUILD_XWIDGET_GLYPH_STRING(START, END, HEAD, TAIL, HL, X, LAST_X) \
+     do									\
+       {								\
+	 s = alloca (sizeof *s);					\
+	 MC_INIT_GLYPH_STRING (s, NULL, w, row, area, START, HL);		\
+	 fill_xwidget_glyph_string (s);					\
+	 append_glyph_string (&(HEAD), &(TAIL), s);			\
+	 ++(START);							\
+         s->x = (X);							\
+       }								\
+     while (false)
+#endif
+
+#define MC_BUILD_CHAR_GLYPH_STRINGS(START, END, HEAD, TAIL, HL, X, LAST_X)	   \
+     do									   \
+       {								   \
+	 int face_id;							   \
+	 unsigned *char2b;						   \
+									   \
+	 face_id = (row)->glyphs[area][START].face_id;			   \
+									   \
+	 s = alloca (sizeof *s);					   \
+	 SAFE_NALLOCA (char2b, 1, (END) - (START));			   \
+	 MC_INIT_GLYPH_STRING (s, char2b, w, row, area, START, HL);	   \
+	 append_glyph_string (&HEAD, &TAIL, s);				   \
+	 s->x = (X);							   \
+	 START = fill_glyph_string (s, face_id, START, END, overlaps);	   \
+       }								   \
+     while (false)
+
+#define MC_BUILD_COMPOSITE_GLYPH_STRING(START, END, HEAD, TAIL, HL, X, LAST_X) \
+  do {									    \
+    int face_id = (row)->glyphs[area][START].face_id;			    \
+    struct face *base_face = FACE_FROM_ID (f, face_id);		    \
+    ptrdiff_t cmp_id = (row)->glyphs[area][START].u.cmp.id;		    \
+    struct composition *cmp = composition_table[cmp_id];		    \
+    unsigned *char2b;							    \
+    struct glyph_string *first_s = NULL;				    \
+    int n;								    \
+									    \
+    SAFE_NALLOCA (char2b, 1, cmp->glyph_len);				    \
+									    \
+    for (n = 0; n < cmp->glyph_len;)					    \
+      {									    \
+	s = alloca (sizeof *s);						    \
+	MC_INIT_GLYPH_STRING (s, char2b, w, row, area, START, HL);		    \
+	append_glyph_string (&(HEAD), &(TAIL), s);			    \
+	s->cmp = cmp;							    \
+	s->cmp_from = n;						    \
+	s->x = (X);							    \
+	if (n == 0)							    \
+	  first_s = s;							    \
+	n = fill_composite_glyph_string (s, base_face, overlaps);	    \
+      }									    \
+									    \
+    ++START;								    \
+    s = first_s;							    \
+  } while (false)
+
+#define MC_BUILD_GSTRING_GLYPH_STRING(START, END, HEAD, TAIL, HL, X, LAST_X) \
+  do {									  \
+    int face_id;							  \
+    unsigned *char2b;							  \
+    Lisp_Object gstring;						  \
+									  \
+    face_id = (row)->glyphs[area][START].face_id;			  \
+    gstring = (composition_gstring_from_id				  \
+	       ((row)->glyphs[area][START].u.cmp.id));			  \
+    s = alloca (sizeof *s);						  \
+    SAFE_NALLOCA (char2b, 1, LGSTRING_GLYPH_LEN (gstring));		  \
+    MC_INIT_GLYPH_STRING (s, char2b, w, row, area, START, HL);		  \
+    append_glyph_string (&(HEAD), &(TAIL), s);				  \
+    s->x = (X);								  \
+    START = fill_gstring_glyph_string (s, face_id, START, END, overlaps); \
+  } while (false)
+
+#define MC_BUILD_GLYPHLESS_GLYPH_STRING(START, END, HEAD, TAIL, HL, X, LAST_X) \
+  do									    \
+    {									    \
+      int face_id;							    \
+									    \
+      face_id = (row)->glyphs[area][START].face_id;			    \
+									    \
+      s = alloca (sizeof *s);						    \
+      MC_INIT_GLYPH_STRING (s, NULL, w, row, area, START, HL);		    \
+      append_glyph_string (&HEAD, &TAIL, s);				    \
+      s->x = (X);							    \
+      START = fill_glyphless_glyph_string (s, face_id, START, END,	    \
+					   overlaps);			    \
+    }									    \
+  while (false)
+
+#define MC_BUILD_GLYPH_STRINGS_1(START, END, HEAD, TAIL, HL, X, LAST_X)	\
+  do									\
+    {									\
+      HEAD = TAIL = NULL;						\
+      while (START < END)						\
+	{								\
+	  struct glyph *first_glyph = (row)->glyphs[area] + START;	\
+	  switch (first_glyph->type)					\
+	    {								\
+	    case CHAR_GLYPH:						\
+	      MC_BUILD_CHAR_GLYPH_STRINGS (START, END, HEAD, TAIL,		\
+					HL, X, LAST_X);			\
+	      break;							\
+									\
+	    case COMPOSITE_GLYPH:					\
+	      if (first_glyph->u.cmp.automatic)				\
+		MC_BUILD_GSTRING_GLYPH_STRING (START, END, HEAD, TAIL,	\
+					    HL, X, LAST_X);		\
+	      else							\
+		MC_BUILD_COMPOSITE_GLYPH_STRING (START, END, HEAD, TAIL,	\
+					      HL, X, LAST_X);		\
+	      break;							\
+									\
+	    case STRETCH_GLYPH:						\
+	      MC_BUILD_STRETCH_GLYPH_STRING (START, END, HEAD, TAIL,	\
+					  HL, X, LAST_X);		\
+	      break;							\
+									\
+	    case IMAGE_GLYPH:						\
+	      MC_BUILD_IMAGE_GLYPH_STRING (START, END, HEAD, TAIL,		\
+					HL, X, LAST_X);			\
+	      break;
+
+#define MC_BUILD_GLYPH_STRINGS_XW(START, END, HEAD, TAIL, HL, X, LAST_X)	\
+            case XWIDGET_GLYPH:                                         \
+              MC_BUILD_XWIDGET_GLYPH_STRING (START, END, HEAD, TAIL,       \
+                                          HL, X, LAST_X);               \
+              break;
+
+#define MC_BUILD_GLYPH_STRINGS_2(START, END, HEAD, TAIL, HL, X, LAST_X)	\
+	    case GLYPHLESS_GLYPH:					\
+	      MC_BUILD_GLYPHLESS_GLYPH_STRING (START, END, HEAD, TAIL,	\
+					    HL, X, LAST_X);		\
+	      break;							\
+									\
+	    default:							\
+	      emacs_abort ();						\
+	    }								\
+									\
+	  if (s)							\
+	    {								\
+	      set_glyph_string_background_width (s, START, LAST_X);	\
+	      (X) += s->width;						\
+	    }								\
+	}								\
+    } while (false)
+
+#define MC_BUILD_GLYPH_STRINGS(START, END, HEAD, TAIL, HL, X, LAST_X)	\
+    MC_BUILD_GLYPH_STRINGS_1(START, END, HEAD, TAIL, HL, X, LAST_X)	\
+    MC_BUILD_GLYPH_STRINGS_XW(START, END, HEAD, TAIL, HL, X, LAST_X)	\
+    MC_BUILD_GLYPH_STRINGS_2(START, END, HEAD, TAIL, HL, X, LAST_X)
+
+/* Set variables WIDTH and BYTES for a multibyte sequence starting at P.
+   DP is a display table or NULL. */
+#define MC_MULTIBYTE_BYTES_WIDTH(p, dp, bytes, width)			\
+  do {									\
+    int ch;								\
+										\
+    ch = STRING_CHAR_AND_LENGTH (p, bytes);				\
+    if (BYTES_BY_CHAR_HEAD (*p) != bytes)				\
+      width = bytes * 4;						\
+    else								\
+      {									\
+	if (dp != 0 && VECTORP (DISP_CHAR_VECTOR (dp, ch)))		\
+	  width = sanitize_char_width (ASIZE (DISP_CHAR_VECTOR (dp, ch))); \
+	else								\
+	  width = CHARACTER_WIDTH (ch);					\
+      }									\
+  } while (0)
+
+Lisp_Object
+mc_vector (int length)
+{
+  struct Lisp_Vector *p = allocate_vector (length);
+  for (ptrdiff_t i = 0; i < length; i++)
+    p->contents[i] = Qnil;
+  return make_lisp_ptr (p, Lisp_Vectorlike);
+}
+
+Lisp_Object
+mc_listn (ptrdiff_t count, Lisp_Object arg, ...)
+{
+  eassume (0 < count);
+  Lisp_Object val = Fcons (arg, Qnil);
+  Lisp_Object tail = val;
+  va_list ap;
+  va_start (ap, arg);
+  for (ptrdiff_t i = 1; i < count; i++)
+    {
+      Lisp_Object elem = Fcons (va_arg (ap, Lisp_Object), Qnil);
+      XSETCDR (tail, elem);
+      tail = elem;
+    }
+  va_end (ap);
+  return val;
+}
+
+Lisp_Object
+mc_memq (Lisp_Object elt, Lisp_Object list)
+{
+  while (1)
+    {
+      if (!CONSP (list) || EQ (XCAR (list), elt))
+        break;
+      list = XCDR (list);
+      if (!CONSP (list) || EQ (XCAR (list), elt))
+        break;
+      list = XCDR (list);
+      if (!CONSP (list) || EQ (XCAR (list), elt))
+        break;
+      list = XCDR (list);
+    }
+  return list;
+}
+
+Lisp_Object
+mc_nth (int num, Lisp_Object list)
+{
+  for (int i = 0; i < num && !NILP (list); i++)
+    list = XCDR (list);
+  if (CONSP (list))
+    return XCAR (list);
+    else
+      return Qnil;
+}
+
+Lisp_Object
+mc_assq (Lisp_Object key, Lisp_Object list)
+{
+  while (1)
+    {
+      if (!CONSP (list)
+          || (CONSP (XCAR (list))
+              && EQ (XCAR (XCAR (list)), key)))
+        break;
+      list = XCDR (list);
+      if (!CONSP (list)
+          || (CONSP (XCAR (list))
+              && EQ (XCAR (XCAR (list)), key)))
+        break;
+      list = XCDR (list);
+      if (!CONSP (list)
+          || (CONSP (XCAR (list))
+              && EQ (XCAR (XCAR (list)), key)))
+        break;
+      list = XCDR (list);
+    }
+  if (CONSP (list))
+    return XCAR (list);
+    else
+      return Qnil;
+}
+
+Lisp_Object
+mc_assoc (Lisp_Object key, Lisp_Object list)
+{
+  Lisp_Object car;
+  while (1)
+    {
+      if (!CONSP (list)
+          || (CONSP (XCAR (list))
+              && (car = XCAR (XCAR (list)),
+                  EQ (car, key) || !NILP (Fequal (car, key)))))
+        break;
+      list = XCDR (list);
+      if (!CONSP (list)
+          || (CONSP (XCAR (list))
+              && (car = XCAR (XCAR (list)),
+                  EQ (car, key) || !NILP (Fequal (car, key)))))
+        break;
+      list = XCDR (list);
+      if (!CONSP (list)
+          || (CONSP (XCAR (list))
+              && (car = XCAR (XCAR (list)),
+                  EQ (car, key) || !NILP (Fequal (car, key)))))
+        break;
+      list = XCDR (list);
+    }
+  if (CONSP (list))
+    return XCAR (list);
+    else
+      return Qnil;
+}
+
+Lisp_Object
+mc_plist_get (Lisp_Object plist, Lisp_Object prop)
+{
+  Lisp_Object tail, halftail;
+  /* halftail is used to detect circular lists.  */
+  tail = halftail = plist;
+  while (CONSP (tail) && CONSP (XCDR (tail)))
+    {
+      if (EQ (prop, XCAR (tail)))
+        return XCAR (XCDR (tail));
+      tail = XCDR (XCDR (tail));
+      halftail = XCDR (halftail);
+      if (EQ (tail, halftail))
+        break;
+    }
+  return Qnil;
+}
+
+/* REGION BEGIN:  mc_region_limit (1)
+   REGION END:  mc_region_limit (0) */
+ptrdiff_t
+mc_region_limit (bool begin_p)
+{
+  if (!NILP (Vtransient_mark_mode)
+      && NILP (Vmark_even_if_inactive)
+      && NILP (BVAR (current_buffer, mark_active)))
+    xsignal0 (Qmark_inactive);
+  Lisp_Object marker = BVAR (current_buffer, mark);
+  int m = (XMARKER (marker)->buffer)
+          ? XMARKER (marker)->charpos
+          : -1;
+  return (m == -1)
+           ? -1
+         : (PT < m) == begin_p
+           ? PT
+         : clip_to_bounds (BEGV, m, ZV);
+}
+
+/* Check the presence of a display property and compute its width.
+   If a property was found and its width was found as well, return
+   its width (>= 0) and set the position of the end of the property
+   in ENDPOS.
+   Otherwise just return -1. */
+static int
+mc_check_display_width (ptrdiff_t pos, ptrdiff_t col, ptrdiff_t *endpos)
+{
+  Lisp_Object val, overlay;
+  if (CONSP (val = get_char_property_and_overlay
+              (make_fixnum (pos), Qdisplay, Qnil, &overlay))
+      && EQ (Qspace, XCAR (val)))
+    { /* FIXME: Use calc_pixel_width_or_height. */
+      Lisp_Object plist = XCDR (val), prop;
+      int width = -1;
+      EMACS_INT align_to_max = (col < MOST_POSITIVE_FIXNUM - INT_MAX
+                                 ? (EMACS_INT) INT_MAX + col
+                                 : MOST_POSITIVE_FIXNUM);
+      if ((prop = mc_plist_get (plist, QCwidth), RANGED_FIXNUMP (0, prop, INT_MAX))
+          || (prop = mc_plist_get (plist, QCrelative_width),
+              RANGED_FIXNUMP (0, prop, INT_MAX)))
+        width = XFIXNUM (prop);
+        else if (FLOATP (prop) && 0 <= XFLOAT_DATA (prop)
+                 && XFLOAT_DATA (prop) <= INT_MAX)
+          width = (int)(XFLOAT_DATA (prop) + 0.5);
+          else if ((prop = mc_plist_get (plist, QCalign_to),
+                    RANGED_FIXNUMP (col, prop, align_to_max)))
+            width = XFIXNUM (prop) - col;
+              else if (FLOATP (prop) && col <= XFLOAT_DATA (prop)
+                       && (XFLOAT_DATA (prop) <= align_to_max))
+                width = (int)(XFLOAT_DATA (prop) + 0.5) - col;
+      if (width >= 0)
+        {
+          ptrdiff_t start;
+          if (OVERLAYP (overlay))
+            *endpos = OVERLAY_POSITION (OVERLAY_END (overlay));
+            else
+              get_property_and_range (pos, Qdisplay, &val, &start, endpos, Qnil);
+          /* For :relative-width, we need to multiply by the column
+             width of the character at POS, if it is greater than 1. */
+          if (!NILP (mc_plist_get (plist, QCrelative_width))
+              && !NILP (BVAR (current_buffer, enable_multibyte_characters)))
+            {
+              int b, wd;
+              unsigned char *p = BYTE_POS_ADDR (CHAR_TO_BYTE (pos));
+              MC_MULTIBYTE_BYTES_WIDTH (p, buffer_display_table (), b, wd);
+              width *= wd;
+            }
+          return width;
+        }
+    }
+  return -1;
+}
+
+/* Try to compose the characters at CHARPOS according to composition
+   rule RULE ([PATTERN PREV-CHARS FUNC]).  LIMIT limits the characters
+   to compose.  STRING, if not nil, is a target string.  WIN is a
+   window where the characters are being displayed.  If characters are
+   successfully composed, return the composition as a glyph-string
+   object.  Otherwise return nil.  */
+static Lisp_Object
+mc_autocmp_chars (Lisp_Object rule, ptrdiff_t charpos, ptrdiff_t bytepos,
+                  ptrdiff_t limit, struct window *win, struct face *face,
+                  Lisp_Object string)
+{
+  ptrdiff_t count = SPECPDL_INDEX ();
+  struct frame *f = XFRAME (win->frame);
+  Lisp_Object pos = make_fixnum (charpos);
+  ptrdiff_t to;
+  ptrdiff_t pt = PT, pt_byte = PT_BYTE;
+  Lisp_Object re, font_object, lgstring;
+  ptrdiff_t len;
+  record_unwind_save_match_data ();
+  re = AREF (rule, 0);
+  if (NILP (re))
+    len = 1;
+  else if (! STRINGP (re))
+    return unbind_to (count, Qnil);
+  else if ((len = fast_looking_at (re, charpos, bytepos, limit, -1, string))
+           > 0)
+    {
+      if (NILP (string))
+        len = BYTE_TO_CHAR (bytepos + len) - charpos;
+      else
+        len = string_byte_to_char (string, bytepos + len) - charpos;
+    }
+  if (len <= 0)
+    return unbind_to (count, Qnil);
+  to = limit = charpos + len;
+#ifdef HAVE_WINDOW_SYSTEM
+  if (FRAME_WINDOW_P (f))
+    {
+      font_object = font_range (charpos, bytepos, &to, win, face, string);
+      if (! FONT_OBJECT_P (font_object)
+          || (! NILP (re)
+              && to < limit
+              && (fast_looking_at (re, charpos, bytepos, to, -1, string) <= 0)))
+        return unbind_to (count, Qnil);
+    }
+  else
+#endif        /* not HAVE_WINDOW_SYSTEM */
+    font_object = win->frame;
+  lgstring = Fcomposition_get_gstring (pos, make_fixnum (to), font_object,
+                                       string);
+  if (NILP (LGSTRING_ID (lgstring)))
+    {
+      /* Save point as marker before calling out to lisp.  */
+      if (NILP (string))
+        record_unwind_protect (restore_point_unwind,
+                               build_marker (current_buffer, pt, pt_byte));
+      lgstring = safe_call (6, Vauto_composition_function, AREF (rule, 2),
+                            pos, make_fixnum (to), font_object, string);
+    }
+  return unbind_to (count, lgstring);
+}
+
+/* Check if the character at CHARPOS (and BYTEPOS) is composed
+   (possibly with the following characters) on window W.  ENDPOS limits
+   characters to be composed.  FACE, if non-NULL, is a base face of
+   the character.  If STRING is not nil, it is a string containing the
+   character to check, and CHARPOS and BYTEPOS are indices in the
+   string.  In that case, FACE must not be NULL.
+   If the character is composed, setup members of CMP_IT (id, nglyphs,
+   from, to, reversed_p), and return true.  Otherwise, update
+   CMP_IT->stop_pos, and return false.  */
+bool
+mc_composition_reseat_it (struct composition_it *cmp_it, ptrdiff_t charpos,
+                          ptrdiff_t bytepos, ptrdiff_t endpos, struct window *w,
+                          struct face *face, Lisp_Object string)
+{
+  if (cmp_it->ch == -2)
+    {
+      composition_compute_stop_pos (cmp_it, charpos, bytepos, endpos, string);
+      if (cmp_it->ch == -2 || cmp_it->stop_pos != charpos)
+        /* The current position is not composed.  */
+        return 0;
+    }
+  if (endpos < 0)
+    endpos = NILP (string) ? BEGV : 0;
+  if (cmp_it->ch < 0)
+    {
+      /* We are looking at a static composition.  */
+      ptrdiff_t start, end;
+      Lisp_Object prop;
+      find_composition (charpos, -1, &start, &end, &prop, string);
+      cmp_it->id = get_composition_id (charpos, bytepos, end - start,
+                                       prop, string);
+      if (cmp_it->id < 0)
+        goto no_composition;
+      cmp_it->nchars = end - start;
+      cmp_it->nglyphs = composition_table[cmp_it->id]->glyph_len;
+    }
+  else if (w)
+    {
+      Lisp_Object lgstring = Qnil;
+      Lisp_Object val, elt;
+      ptrdiff_t i;
+      val = CHAR_TABLE_REF (Vcomposition_function_table, cmp_it->ch);
+      for (i = 0; i < cmp_it->rule_idx; i++, val = XCDR (val));
+      if (charpos < endpos)
+        {
+          for (; CONSP (val); val = XCDR (val))
+            {
+              elt = XCAR (val);
+              if (! VECTORP (elt) || ASIZE (elt) != 3
+                  || ! INTEGERP (AREF (elt, 1)))
+                continue;
+              if (XFIXNAT (AREF (elt, 1)) != cmp_it->lookback)
+                goto no_composition;
+              lgstring = mc_autocmp_chars (elt, charpos, bytepos, endpos,
+                                        w, face, string);
+              if (composition_gstring_p (lgstring))
+                break;
+              lgstring = Qnil;
+              /* Composition failed perhaps because the font doesn't
+                 support sufficient range of characters.  Try the
+                 other composition rules if any.  */
+            }
+          cmp_it->reversed_p = 0;
+        }
+      else
+        {
+          ptrdiff_t cpos = charpos, bpos = bytepos;
+          cmp_it->reversed_p = 1;
+          elt = XCAR (val);
+          if (cmp_it->lookback > 0)
+            {
+              cpos = charpos - cmp_it->lookback;
+              if (STRINGP (string))
+                bpos = string_char_to_byte (string, cpos);
+              else
+                bpos = CHAR_TO_BYTE (cpos);
+            }
+          lgstring = mc_autocmp_chars (elt, cpos, bpos, charpos + 1, w, face,
+                                    string);
+          if (! composition_gstring_p (lgstring)
+              || cpos + LGSTRING_CHAR_LEN (lgstring) - 1 != charpos)
+            /* Composition failed or didn't cover the current
+               character.  */
+            goto no_composition;
+        }
+      if (NILP (lgstring))
+        goto no_composition;
+      if (NILP (LGSTRING_ID (lgstring)))
+        lgstring = composition_gstring_put_cache (lgstring, -1);
+      cmp_it->id = XFIXNUM (LGSTRING_ID (lgstring));
+      for (i = 0; i < LGSTRING_GLYPH_LEN (lgstring); i++)
+        if (NILP (LGSTRING_GLYPH (lgstring, i)))
+          break;
+      cmp_it->nglyphs = i;
+      cmp_it->from = 0;
+      cmp_it->to = i;
+    }
+  else
+    goto no_composition;
+  return 1;
+ no_composition:
+  if (charpos == endpos)
+    return 0;
+  if (charpos < endpos)
+    {
+      charpos++;
+      if (NILP (string))
+        INC_POS (bytepos);
+      else
+        bytepos += BYTES_BY_CHAR_HEAD (*(SDATA (string) + bytepos));
+    }
+  else
+    {
+      charpos--;
+      /* BYTEPOS is calculated in composition_compute_stop_pos */
+      bytepos = -1;
+    }
+  if (cmp_it->reversed_p)
+    endpos = -1;
+  composition_compute_stop_pos (cmp_it, charpos, bytepos, endpos, string);
+  return 0;
+}
+
+/* Scanning from the beginning of the current line, stop at the buffer
+   position ENDPOS or at the column GOALCOL or at the end of line, whichever
+   comes first.
+   Return the resulting buffer position and column in ENDPOS and GOALCOL.
+   PREVCOL gets set to the column of the previous position (it's always
+   strictly smaller than the goal column). */
+void
+mc_scan_for_column (ptrdiff_t *endpos, EMACS_INT *goalcol, ptrdiff_t *prevcol, ptrdiff_t pt)
+{
+  EMACS_INT last_known_column_modified = 0;
+  ptrdiff_t last_known_column = 0;
+  int tab_width = SANE_TAB_WIDTH (current_buffer);
+  bool ctl_arrow = !NILP (BVAR (current_buffer, ctl_arrow));
+  struct Lisp_Char_Table *dp = buffer_display_table ();
+  bool multibyte = !NILP (BVAR (current_buffer, enable_multibyte_characters));
+  struct composition_it cmp_it;
+  Lisp_Object window;
+  struct window *w;
+  /* Start the scan at the beginning of this line with column number 0. */
+  register ptrdiff_t col = 0, prev_col = 0;
+  EMACS_INT goal = goalcol ? *goalcol : MOST_POSITIVE_FIXNUM;
+  ptrdiff_t end = endpos ? *endpos : pt;
+  ptrdiff_t scan, scan_byte, next_boundary;
+  scan = find_newline (pt, CHAR_TO_BYTE (pt), BEGV, BEGV_BYTE, -1, NULL, &scan_byte, 1);
+  next_boundary = scan;
+  window = Fget_buffer_window (Fcurrent_buffer (), Qnil);
+  w = ! NILP (window) ? XWINDOW (window) : NULL;
+  memset (&cmp_it, 0, sizeof cmp_it);
+  cmp_it.id = -1;
+  composition_compute_stop_pos (&cmp_it, scan, scan_byte, end, Qnil);
+  /* Scan forward to the target position. */
+  while (scan < end)
+    {
+      int c;
+      /* Occasionally we may need to skip invisible text. */
+      while (scan == next_boundary)
+        {
+          ptrdiff_t old_scan = scan;
+          /* This updates NEXT_BOUNDARY to the next place
+             where we might need to skip more invisible text. */
+          scan = skip_invisible (scan, &next_boundary, end, Qnil);
+          if (scan != old_scan)
+            scan_byte = CHAR_TO_BYTE (scan);
+          if (scan >= end)
+            goto endloop;
+        }
+      /* Test reaching the goal column.  We do this after skipping
+   invisible characters, so that we put point before the
+   character on which the cursor will appear. */
+      if (col >= goal)
+        break;
+      prev_col = col;
+      { /* Check display property. */
+        ptrdiff_t endp;
+        int width = mc_check_display_width (scan, col, &endp);
+        if (width >= 0)
+          {
+            col += width;
+            if (endp > scan) /* Avoid infinite loops with 0-width overlays. */
+              {
+                scan = endp;
+                scan_byte = CHAR_TO_BYTE (scan);
+                continue;
+              }
+          }
+      }
+      /* Check composition sequence. */
+      if (cmp_it.id >= 0
+          || (scan == cmp_it.stop_pos
+              && mc_composition_reseat_it (&cmp_it, scan, scan_byte, end, w, NULL, Qnil)))
+        composition_update_it (&cmp_it, scan, scan_byte, Qnil);
+      if (cmp_it.id >= 0)
+        {
+          scan += cmp_it.nchars;
+          scan_byte += cmp_it.nbytes;
+          if (scan <= end)
+            col += cmp_it.width;
+          if (cmp_it.to == cmp_it.nglyphs)
+            {
+              cmp_it.id = -1;
+              composition_compute_stop_pos (&cmp_it, scan, scan_byte, end, Qnil);
+            }
+            else
+              cmp_it.from = cmp_it.to;
+          continue;
+        }
+      c = FETCH_BYTE (scan_byte);
+      /* See if there is a display table and it relates to this character. */
+      if (dp != 0
+          && ! (multibyte && LEADING_CODE_P (c))
+          && VECTORP (DISP_CHAR_VECTOR (dp, c)))
+        {
+          Lisp_Object charvec;
+          ptrdiff_t i, n;
+          /* This character is displayed using a vector of glyphs.
+             Update the column/position based on those glyphs. */
+          charvec = DISP_CHAR_VECTOR (dp, c);
+          n = ASIZE (charvec);
+          for (i = 0; i < n; i++)
+            {
+              /* This should be handled the same as
+              next_element_from_display_vector does it. */
+              Lisp_Object entry = AREF (charvec, i);
+              if (GLYPH_CODE_P (entry))
+                c = GLYPH_CODE_CHAR (entry);
+              else
+                c = ' ';
+              if (c == '\n')
+                goto endloop;
+              if (c == '\r' && EQ (BVAR (current_buffer, selective_display), Qt))
+                goto endloop;
+              if (c == '\t')
+                {
+                  col += tab_width;
+                  col = col / tab_width * tab_width;
+                }
+                else
+                  ++col;
+            }
+        }
+        else
+          {
+            /* The display table doesn't affect this character;
+               it displays as itself. */
+            if (c == '\n')
+              goto endloop;
+            if (c == '\r' && EQ (BVAR (current_buffer, selective_display), Qt))
+              goto endloop;
+            if (c == '\t')
+              {
+                col += tab_width;
+                col = col / tab_width * tab_width;
+              }
+              else if (multibyte && LEADING_CODE_P (c))
+                {
+                  /* Start of multi-byte form. */
+                  unsigned char *ptr;
+                  int bytes, width;
+                  ptr = BYTE_POS_ADDR (scan_byte);
+                  MC_MULTIBYTE_BYTES_WIDTH (ptr, dp, bytes, width);
+                  /* Subtract one to compensate for the increment
+                  that is going to happen below. */
+                  scan_byte += bytes - 1;
+                  col += width;
+                }
+                else if (ctl_arrow && (c < 040 || c == 0177))
+                  col += 2;
+                  else if (c < 040 || c >= 0177)
+                    col += 4;
+                    else
+                      col++;
+          }
+      scan++;
+      scan_byte++;
+    }
+ endloop:
+  last_known_column = col;
+  last_known_column_point = pt;
+  last_known_column_modified = MODIFF;
+  if (goalcol)
+    *goalcol = col;
+  if (endpos)
+    *endpos = scan;
+  if (prevcol)
+    *prevcol = prev_col;
+}
+
+ptrdiff_t
+mc_current_column (struct window *w, ptrdiff_t pt)
+{
+  /* `buf_charpos_to_bytepos':  eassert (BUF_BEG (b) <= charpos && charpos <= BUF_Z (b)); */
+  struct buffer *b = XBUFFER (w->contents);
+  struct buffer *old_buffer = NULL;
+  if (b != current_buffer)
+    {
+      old_buffer = current_buffer;
+      set_buffer_internal (b);
+    }
+  bool barf_crash = (BUF_BEG (b) <= pt && pt <= BUF_Z (b)) ? false : true;
+  if (barf_crash)
+    {
+      if (old_buffer)
+        set_buffer_internal (old_buffer);
+      return 0;
+    }
+  EMACS_INT last_known_column_modified = 0;
+  ptrdiff_t last_known_column = 0;
+  ptrdiff_t col;
+  unsigned char *ptr, *stop;
+  bool tab_seen;
+  ptrdiff_t post_tab;
+  int c;
+  int tab_width = SANE_TAB_WIDTH (current_buffer);
+  bool ctl_arrow = !NILP (BVAR (current_buffer, ctl_arrow));
+  struct Lisp_Char_Table *dp = buffer_display_table ();
+  if (pt == last_known_column_point
+      && MODIFF == last_known_column_modified)
+    {
+      if (old_buffer)
+        set_buffer_internal (old_buffer);
+      return last_known_column;
+    }
+  /* If the buffer has overlays, text properties,
+     or multibyte characters, use a more general algorithm. */
+  if (buffer_intervals (current_buffer)
+      || buffer_has_overlays ()
+      || Z != Z_BYTE)
+    {
+      EMACS_INT col = MOST_POSITIVE_FIXNUM;
+      mc_scan_for_column (&pt, &col, NULL, pt);
+      {
+        if (old_buffer)
+          set_buffer_internal (old_buffer);
+        return col;
+      }
+    }
+  /* Scan backwards from point to the previous newline,
+     counting width.  Tab characters are the only complicated case. */
+  /* Make a pointer for decrementing through the chars before point. */
+  ptr = BYTE_POS_ADDR (CHAR_TO_BYTE (pt) - 1) + 1;
+  /* Make a pointer to where consecutive chars leave off,
+     going backwards from point. */
+  if (pt == BEGV)
+    stop = ptr;
+    else if (pt <= GPT || BEGV > GPT)
+      stop = BEGV_ADDR;
+      else
+        stop = GAP_END_ADDR;
+  col = 0, tab_seen = 0, post_tab = 0;
+  while (1)
+    {
+      ptrdiff_t i, n;
+      Lisp_Object charvec;
+      if (ptr == stop)
+        {
+          /* We stopped either for the beginning of the buffer
+             or for the gap. */
+          if (ptr == BEGV_ADDR)
+            break;
+          /* It was the gap.  Jump back over it. */
+          stop = BEGV_ADDR;
+          ptr = GPT_ADDR;
+          /* Check whether that brings us to beginning of buffer. */
+          if (BEGV >= GPT)
+            break;
+        }
+      c = *--ptr;
+      if (dp && VECTORP (DISP_CHAR_VECTOR (dp, c)))
+        {
+          charvec = DISP_CHAR_VECTOR (dp, c);
+          n = ASIZE (charvec);
+        }
+        else
+          {
+            charvec = Qnil;
+            n = 1;
+          }
+      for (i = n - 1; i >= 0; --i)
+        {
+          if (VECTORP (charvec))
+            {
+              /* This should be handled the same as
+           next_element_from_display_vector does it. */
+              Lisp_Object entry = AREF (charvec, i);
+              if (GLYPH_CODE_P (entry))
+                c = GLYPH_CODE_CHAR (entry);
+                else
+                  c = ' ';
+            }
+          if (c >= 040 && c < 0177)
+            col++;
+            else if (c == '\n'
+                     || (c == '\r'
+                         && EQ (BVAR (current_buffer, selective_display), Qt)))
+              {
+                ptr++;
+                goto start_of_line_found;
+              }
+              else if (c == '\t')
+                {
+                  if (tab_seen)
+                    col = ((col + tab_width) / tab_width) * tab_width;
+                  post_tab += col;
+                  col = 0;
+                  tab_seen = 1;
+                }
+                else if (VECTORP (charvec))
+                  /* With a display table entry, C is displayed as is, and
+                     not displayed as \NNN or as ^N.  If C is a single-byte
+                     character, it takes one column.  If C is multi-byte in
+                     a unibyte buffer, it's translated to unibyte, so it
+                     also takes one column. */
+                  ++col;
+                  else
+                    col += (ctl_arrow && c < 0200) ? 2 : 4;
+        }
+    }
+ start_of_line_found:
+  if (tab_seen)
+    {
+      col = ((col + tab_width) / tab_width) * tab_width;
+      col += post_tab;
+    }
+  last_known_column = col;
+  last_known_column_point = pt;
+  last_known_column_modified = MODIFF;
+  if (old_buffer)
+    set_buffer_internal (old_buffer);
+  return col;
+}
+
+DEFUN ("mc-current-column", Fmc_current_column, Smc_current_column, 2, 2, 0,
+       doc: /* Return the horizontal position of point.  Beginning of line is column 0.
+This is calculated by adding together the widths of all the displayed
+representations of the character between the start of the previous line
+and point (e.g., control characters will have a width of 2 or 4, tabs
+will have a variable width).
+Ignores finite width of frame, which means that this function may return
+values greater than (frame-width).
+Whether the line is visible (if `selective-display' is t) has no effect;
+however, ^M is treated as end of line when `selective-display' is t.
+Text that has an invisible property is considered as having width 0, unless
+`buffer-invisibility-spec' specifies that it is replaced by an ellipsis.  */)
+  (Lisp_Object window, Lisp_Object pt)
+{
+  struct window *w = decode_live_window (window);
+  Lisp_Object temp;
+  XSETFASTINT (temp, mc_current_column (w, XFIXNUM (pt)));
+  return temp;
+}
+
+/* USAGE:  fprintf (stderr, "FRAME (%s)", mc_frame (f)); */
+char *
+mc_frame (struct frame *f)
+{
+  Lisp_Object frame;
+  XSETFRAME (frame, f);
+  return SSDATA (Fprin1_to_string (frame, Qnil));
+}
+
+/* USAGE:  fprintf (stderr, "WINDOW (%s)", mc_window (w)); */
+char *
+mc_window (struct window *w)
+{
+  Lisp_Object window;
+  XSETWINDOW (window, w);
+  return SSDATA (Fprin1_to_string (window, Qnil));
+}
+
+/* USAGE:  fprintf (stderr, "CHARACTER (%s)", mc_char_to_string (glyph->u.ch)); */
+char *
+mc_char_to_string (int arg)
+{
+  Lisp_Object character = (0 <= arg && arg <= MAX_CHAR)
+                           ? Fchar_to_string (make_fixnum (arg))
+                           : Qnil;
+  char * result = (!NILP (character)
+                   && arg == 9)
+                    ? "\\t"
+                  : (!NILP (character)
+                     && arg == 10)
+                    ? "\\n"
+                  : (!NILP (character)
+                     && arg == 32)
+                    ? "\\s"
+                  : (!NILP (character)
+                     && arg != 9
+                     && arg != 10
+                     && arg != 32)
+                    ? SSDATA (character)
+                  : "\\?";
+  return result;
+}
+
+int
+mc_lisp_to_cursor_type (Lisp_Object arg)
+{
+  char *str;
+  if (XTYPE (arg) == Lisp_String)
+    str = SSDATA (arg);
+    else if (XTYPE (arg) == Lisp_Symbol)
+      str = SSDATA (SYMBOL_NAME (arg));
+      else return -1;
+  if (!strcmp (str, "no"))
+    return MC_NO_CURSOR;
+  if (!strcmp (str, "mc-left-fringe-bitmap"))
+    return MC_LEFT_FRINGE_BITMAP;
+  if (!strcmp (str, "mc-right-fringe-bitmap"))
+    return MC_RIGHT_FRINGE_BITMAP;
+  if (!strcmp (str, "box"))
+    return MC_FILLED_BOX;
+  if (!strcmp (str, "framed"))
+    return MC_FRAMED_BOX;
+  if (!strcmp (str, "hollow"))
+    return MC_HOLLOW_BOX;
+  if (!strcmp (str, "bar"))
+    return MC_BAR;
+  if (!strcmp (str, "hbar"))
+    return MC_HBAR;
+  return -1;
+}
+
+/* USAGE:  fprintf (stderr, "CURSOR TYPE (%s)", mc_cursor_type_to_string (arg)); */
+char *
+mc_cursor_type_to_string (enum mc_cursor_type cursor_type)
+{
+  switch (cursor_type)
+    {
+      case MC_FILLED_BOX: return "MC_FILLED_BOX";
+      case MC_FRAMED_BOX: return "MC_FRAMED_BOX";
+      case MC_HOLLOW_BOX: return "MC_HOLLOW_BOX";
+      case MC_BAR: return "MC_BAR";
+      case MC_HBAR: return "MC_HBAR";
+      case MC_LEFT_FRINGE_BITMAP: return "MC_LEFT_FRINGE_BITMAP";
+      case MC_RIGHT_FRINGE_BITMAP: return "MC_RIGHT_FRINGE_BITMAP";
+      case MC_NO_FRINGE_BITMAP: return "MC_NO_FRINGE_BITMAP";
+      case MC_NO_CURSOR:
+      default:
+      return "MC_NO_CURSOR";
+    }
+}
+
+/* USAGE:  fprintf (stderr, "GLYPH FLAVOR (%s)", mc_flavor_to_string (arg)); */
+char *
+mc_flavor_to_string (enum mc_flavor glyph_flavor)
+{
+  switch (glyph_flavor)
+    {
+      case NO_FLAVOR: return "NO_FLAVOR";
+      case MC_GLYPH: return "MC_GLYPH";
+      case MC_GLYPHLESS: return "MC_GLYPHLESS";
+      case MC_OVERLAY_ARROW_BITMAP: return "MC_OVERLAY_ARROW_BITMAP";
+      case MC_PILCROW: return "MC_PILCROW";
+      case MC_HOLLOW_RECTANGLE_RIGHT_ARROW: return "MC_HOLLOW_RECTANGLE_RIGHT_ARROW";
+      case MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW: return "MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW";
+      case MC_HOLLOW_RECTANGLE: return "MC_HOLLOW_RECTANGLE";
+      case MC_VERTICAL_BAR_RIGHT_ARROW: return "MC_VERTICAL_BAR_RIGHT_ARROW";
+      case MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW: return "MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW";
+      case MC_VERTICAL_BAR: return "MC_VERTICAL_BAR";
+      case MC_REVERSED_VERTICAL_BAR: return "MC_REVERSED_VERTICAL_BAR";
+      case MC_VERTICAL_BAR_BACKSLASH: return "MC_VERTICAL_BAR_BACKSLASH";
+      default:
+      return "UNKNOWN";
+    }
+}
+
+/* USAGE:  fprintf (stderr, "CACHE-TYPE (%s)", mc_cache_type_to_string (arg)); */
+char *
+mc_cache_type_to_string (enum mc_cache_type cache_type)
+{
+  switch (cache_type)
+    {
+      case NO_CACHE: return "NO_CACHE";
+      case MC_CACHE: return "MC_CACHE";
+      case CH_CACHE: return "CH_CACHE";
+      case FC_CACHE: return "FC_CACHE";
+      default:
+      return "UNKNOWN";
+    }
+}
+
+/* USAGE:  fprintf (stderr, "ACTION-TYPE (%s)", mc_engine_type_to_string (arg)); */
+char *
+mc_engine_type_to_string (enum mc_engine_type action_type)
+{
+  switch (action_type)
+    {
+      case MULTIPLE_CURSORS: return "MULTIPLE_CURSORS";
+      case HORIZONTAL_RULER: return "HORIZONTAL_RULER";
+      case VERTICAL_RULER: return "VERTICAL_RULER";
+      case FILL_COLUMN: return "FILL_COLUMN";
+      case CURSOR_INDICATOR: return "CURSOR_INDICATOR";
+      default:
+      return "UNKNOWN";
+    }
+}
+
+/* USAGE:  fprintf (stderr, "FROM_WHERE (%s)", mc_draw_row_type_to_string (arg)); */
+char *
+mc_draw_row_type_to_string (enum mc_draw_row_type from_where)
+{
+  switch (from_where)
+    {
+      case NOWHERE: return "NOWHERE";
+      case SCRIBE_ONE: return "SCRIBE_ONE";
+      case SCRIBE_TWO: return "SCRIBE_TWO";
+      case SCRIBE_THREE: return "SCRIBE_THREE";
+      case SKIPPED: return "SKIPPED";
+      case POST_CHANGED: return "POST_CHANGED";
+      case UNCHANGED: return "UNCHANGED";
+      case SET_CURSOR_ONE: return "SET_CURSOR_ONE";
+      case SET_CURSOR_TWO: return "SET_CURSOR_TWO";
+      default:
+      return "UNKNOWN";
+    }
+}
+
+/* USAGE:  fprintf (stderr, "FROM_WHERE (%s)", mc_draw_row_type_to_string (arg)); */
+char *
+mc_redraw_row_type_to_string (enum mc_redraw_row_type from_where)
+{
+  switch (from_where)
+    {
+      case UPDATE_WINDOW__REDRAW_OVERLAPPED_ROWS: return "UPDATE_WINDOW__REDRAW_OVERLAPPED_ROWS";
+      case GUI_INSERT_GLYPHS: return "GUI_INSERT_GLYPHS";
+      case GUI_FIX_OVERLAPPING_AREA: return "GUI_FIX_OVERLAPPING_AREA";
+      case DRAW_ROW_WITH_MOUSE_FACE: return "DRAW_ROW_WITH_MOUSE_FACE";
+      case EXPOSE_AREA_ONE: return "EXPOSE_AREA_ONE";
+      case EXPOSE_AREA_TWO: return "EXPOSE_AREA_TWO";
+      case EXPOSE_LINE: return "EXPOSE_LINE";
+      default:
+      return "UNKNOWN";
+    }
+}
+
+void
+mc_cache_inspector (struct window *w, struct mc_matrix matrix)
+{
+  int vpos_allocated = w->mc_matrix.vpos_allocated;
+  int vpos_used = w->mc_matrix.vpos_used;
+  fprintf (stderr, "%s:  matrix.vpos_allocated (%d) | matrix.vpos_used (%d)\n",
+                   mc_window (w), vpos_allocated, vpos_used);
+  for (enum mc_cache_type cache_type = MC_CACHE;
+       cache_type < NO_CACHE;
+       ++cache_type)
+    {
+      int cursors_used = w->mc_matrix.cursors_used[cache_type];
+      fprintf (stderr, "  matrix.cursors_used[%s] (%d)\n",
+                       mc_cache_type_to_string (cache_type), cursors_used);
+    }
+  for (int vnth = 0;
+       vnth < w->mc_matrix.vpos_used;
+       ++vnth)
+    {
+      for (enum mc_cache_type cache_type = MC_CACHE;
+           cache_type < NO_CACHE;
+           ++cache_type)
+        {
+          int cache_allocated = w->mc_matrix.vpos[vnth].cache_allocated[cache_type];
+          int cache_used = w->mc_matrix.vpos[vnth].cache_used[cache_type];
+          fprintf (stderr, "    vnth (%d) | cache_allocated[%s] (%d) | cache_used[%s] (%d)\n",
+                           vnth,
+                           mc_cache_type_to_string (cache_type),
+                           cache_allocated,
+                           mc_cache_type_to_string (cache_type),
+                           cache_used);
+        }
+    }
+}
+
+void
+mc_set_lsl_bg (struct window *w, enum face_id face_id, struct mc_RGB *lsl)
+{
+  struct frame *f = XFRAME (w->frame);
+  struct face *face;
+  if (!NILP (Vface_remapping_alist)
+      && (face_id == DEFAULT_FACE_ID /* Qdefault */
+          || face_id == MODE_LINE_FACE_ID /* Qmode_line */
+          || face_id == MODE_LINE_INACTIVE_FACE_ID /* Qmode_line_inactive */
+          || face_id == HEADER_LINE_FACE_ID /* Qheader_line */
+          || face_id == TOOL_BAR_FACE_ID /* Qtool_bar */
+          || face_id == FRINGE_FACE_ID /* Qfringe */
+          || face_id == SCROLL_BAR_FACE_ID /* Qscroll_bar */
+          || face_id == BORDER_FACE_ID /* Qborder */
+          || face_id == CURSOR_FACE_ID /* Qcursor */
+          || face_id == MOUSE_FACE_ID /* Qmouse */
+          || face_id == MENU_FACE_ID /* Qmenu */
+          || face_id == WINDOW_DIVIDER_FACE_ID /* Qwindow_divider */
+          || face_id == WINDOW_DIVIDER_FIRST_PIXEL_FACE_ID /* Qwindow_divider_first_pixel */
+          || face_id == WINDOW_DIVIDER_LAST_PIXEL_FACE_ID /* Qwindow_divider_last_pixel */
+          || face_id == VERTICAL_BORDER_FACE_ID /* Qvertical_border */
+          || face_id == INTERNAL_BORDER_FACE_ID)) /* Qinternal_border */
+    face = FACE_FROM_ID (f, lookup_basic_face (w, f, face_id));
+    else
+      face = FACE_FROM_ID (f, face_id);
+  Lisp_Object color = (face != NULL)
+                      ? face->lface[LFACE_BACKGROUND_INDEX]
+                      : build_string ("OrangeRed");
+  mc_xw_color_values (w, color, lsl);
+}
+
+void
+mc_set_essentials (struct window *w, struct mc_essentials *essentials)
+{
+  if (!BUFFERP (w->contents))
+    return;
+  if (NILP (BVAR (XBUFFER (w->contents), mc_conf))
+      && NILP (BVAR (XBUFFER (w->contents), crosshairs))
+      && NILP (BVAR (XBUFFER (w->contents), fc_visible)))
+    return;
+  struct frame *f = XFRAME (w->frame);
+  essentials->active_p = (w == XWINDOW (f->selected_window)
+                          && f == FRAME_DISPLAY_INFO (f)->highlight_frame);
+  struct buffer *b = XBUFFER (w->contents);
+  struct buffer *old_buffer = NULL;
+  ptrdiff_t opoint = (w == XWINDOW (selected_window))
+                     ? PT
+                     : XFIXNUM (Fmarker_position (w->pointm));
+  ptrdiff_t current_col = mc_current_column (w, opoint);
+  int frame_char_width = FRAME_COLUMN_WIDTH (f);
+  bool fill_column_p = !NILP (BVAR (b, fill_column));
+  int fill_col = XFIXNUM (BVAR (b, fill_column));
+  int hscl_x = w->hscroll * frame_char_width;
+  if (b != current_buffer)
+    {
+      old_buffer = current_buffer;
+      set_buffer_internal (b);
+    }
+  essentials->zv = ZV;
+  essentials->zv_byte = ZV_BYTE;
+  essentials->fc_x = (fill_column_p
+                      && !NILP (Vdisplay_line_numbers))
+                       ? (fill_col * frame_char_width) + w->mc.lnum_pixel_width - hscl_x
+                     : (fill_column_p
+                        && NILP (Vdisplay_line_numbers))
+                       ? (fill_col * frame_char_width) - hscl_x
+                     : 0;
+  if (old_buffer)
+    set_buffer_internal (old_buffer);
+  enum face_id fill_column_pre_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+     && NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+      ? lookup_named_face (w, f, intern ("fc-inactive-pre-zv-face"), true)
+    : (!essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x == essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-opoint-inactive-pre-zv-face"), true)
+    : (essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x == essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-opoint-pre-zv-face"), true)
+    : (!essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x != essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-inactive-pre-zv-face"), true)
+    : (essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x != essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-pre-zv-face"), true)
+    : lookup_named_face (w, f, intern ("fc-pre-zv-face"), true);
+  struct face *fill_column_pre_zv_face = FACE_FROM_ID (f, fill_column_pre_zv_face_id);
+  Lisp_Object fill_column_pre_zv_color = fill_column_pre_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB fc_pre_zv_fg;
+  mc_xw_color_values (w, fill_column_pre_zv_color, &fc_pre_zv_fg);
+  essentials->fc_fg[PRE_ZV].red = fc_pre_zv_fg.red;
+  essentials->fc_fg[PRE_ZV].green = fc_pre_zv_fg.green;
+  essentials->fc_fg[PRE_ZV].blue = fc_pre_zv_fg.blue;
+  enum face_id fill_column_at_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+     && NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+      ? lookup_named_face (w, f, intern ("fc-inactive-at-zv-face"), true)
+    : (!essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x == essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-opoint-inactive-at-zv-face"), true)
+    : (essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x == essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-opoint-at-zv-face"), true)
+    : (!essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x != essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-inactive-at-zv-face"), true)
+    : (essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x != essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-at-zv-face"), true)
+    : lookup_named_face (w, f, intern ("fc-at-zv-face"), true);
+  struct face *fill_column_at_zv_face = FACE_FROM_ID (f, fill_column_at_zv_face_id);
+  Lisp_Object fill_column_at_zv_color = fill_column_at_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB fc_at_zv_fg;
+  mc_xw_color_values (w, fill_column_at_zv_color, &fc_at_zv_fg);
+  essentials->fc_fg[AT_ZV].red = fc_at_zv_fg.red;
+  essentials->fc_fg[AT_ZV].green = fc_at_zv_fg.green;
+  essentials->fc_fg[AT_ZV].blue = fc_at_zv_fg.blue;
+  enum face_id fill_column_post_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+     && NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+      ? lookup_named_face (w, f, intern ("fc-inactive-post-zv-face"), true)
+    : (!essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x == essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-opoint-inactive-post-zv-face"), true)
+    : (essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x == essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-opoint-post-zv-face"), true)
+    : (!essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), fc_inactive_windows))
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x != essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-inactive-post-zv-face"), true)
+    : (essentials->active_p
+       && !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+       && !NILP (BVAR (b, ch_vertical_ruler))
+       && w->cursor.x != essentials->fc_x)
+      ? lookup_named_face (w, f, intern ("fc-post-zv-face"), true)
+    : lookup_named_face (w, f, intern ("fc-post-zv-face"), true);
+  struct face *fill_column_post_zv_face = FACE_FROM_ID (f, fill_column_post_zv_face_id);
+  Lisp_Object fill_column_post_zv_color = fill_column_post_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB fc_post_zv_fg;
+  mc_xw_color_values (w, fill_column_post_zv_color, &fc_post_zv_fg);
+  essentials->fc_fg[POST_ZV].red = fc_post_zv_fg.red;
+  essentials->fc_fg[POST_ZV].green = fc_post_zv_fg.green;
+  essentials->fc_fg[POST_ZV].blue = fc_post_zv_fg.blue;
+  enum face_id even_pre_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-even-inactive-pre-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-even-pre-zv-face"), true);
+  struct face *even_pre_zv_face = FACE_FROM_ID (f, even_pre_zv_face_id);
+  Lisp_Object even_pre_zv_color = even_pre_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB even_pre_zv_fg;
+  mc_xw_color_values (w, even_pre_zv_color, &even_pre_zv_fg);
+  enum face_id even_at_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-even-inactive-at-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-even-at-zv-face"), true);
+  struct face *even_at_zv_face = FACE_FROM_ID (f, even_at_zv_face_id);
+  Lisp_Object even_at_zv_color = even_at_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB even_at_zv_fg;
+  mc_xw_color_values (w, even_at_zv_color, &even_at_zv_fg);
+  enum face_id even_post_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-even-inactive-post-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-even-post-zv-face"), true);
+  struct face *even_post_zv_face = FACE_FROM_ID (f, even_post_zv_face_id);
+  Lisp_Object even_post_zv_color = even_post_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB even_post_zv_fg;
+  mc_xw_color_values (w, even_post_zv_color, &even_post_zv_fg);
+  enum face_id odd_pre_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-odd-inactive-pre-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-odd-pre-zv-face"), true);
+  struct face *odd_pre_zv_face = FACE_FROM_ID (f, odd_pre_zv_face_id);
+  Lisp_Object odd_pre_zv_color = odd_pre_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB odd_pre_zv_fg;
+  mc_xw_color_values (w, odd_pre_zv_color, &odd_pre_zv_fg);
+  enum face_id odd_at_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-odd-inactive-at-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-odd-at-zv-face"), true);
+  struct face *odd_at_zv_face = FACE_FROM_ID (f, odd_at_zv_face_id);
+  Lisp_Object odd_at_zv_color = odd_at_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB odd_at_zv_fg;
+  mc_xw_color_values (w, odd_at_zv_color, &odd_at_zv_fg);
+  enum face_id odd_post_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-odd-inactive-post-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-odd-post-zv-face"), true);
+  struct face *odd_post_zv_face = FACE_FROM_ID (f, odd_post_zv_face_id);
+  Lisp_Object odd_post_zv_color = odd_post_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB odd_post_zv_fg;
+  mc_xw_color_values (w, odd_post_zv_color, &odd_post_zv_fg);
+  enum face_id post_fill_pre_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-post-fill-inactive-pre-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-post-fill-pre-zv-face"), true);
+  struct face *post_fill_pre_zv_face = FACE_FROM_ID (f, post_fill_pre_zv_face_id);
+  Lisp_Object post_fill_pre_zv_color = post_fill_pre_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB post_fill_pre_zv_fg;
+  mc_xw_color_values (w, post_fill_pre_zv_color, &post_fill_pre_zv_fg);
+  enum face_id post_fill_at_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-post-fill-inactive-at-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-post-fill-at-zv-face"), true);
+  struct face *post_fill_at_zv_face = FACE_FROM_ID (f, post_fill_at_zv_face_id);
+  Lisp_Object post_fill_at_zv_color = post_fill_at_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB post_fill_at_zv_fg;
+  mc_xw_color_values (w, post_fill_at_zv_color, &post_fill_at_zv_fg);
+  enum face_id post_fill_post_zv_face_id =
+    (!essentials->active_p
+     && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+    ? lookup_named_face (w, f, intern ("+-post-fill-inactive-post-zv-face"), true)
+    : lookup_named_face (w, f, intern ("+-post-fill-post-zv-face"), true);
+  struct face *post_fill_post_zv_face = FACE_FROM_ID (f, post_fill_post_zv_face_id);
+  Lisp_Object post_fill_post_zv_color = post_fill_post_zv_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB post_fill_post_zv_fg;
+  mc_xw_color_values (w, post_fill_post_zv_color, &post_fill_post_zv_fg);
+  enum face_id special_char_face_id =
+    lookup_named_face (w, f, intern ("+-special-character-face"), true);
+  struct face *special_char_face = FACE_FROM_ID (f, special_char_face_id);
+  Lisp_Object special_char_fg_color = special_char_face->lface[LFACE_FOREGROUND_INDEX];
+  struct mc_RGB sp_foreground;
+  mc_xw_color_values (w, special_char_fg_color, &sp_foreground);
+  essentials->sp_fg.red = sp_foreground.red;
+  essentials->sp_fg.green = sp_foreground.green;
+  essentials->sp_fg.blue = sp_foreground.blue;
+  /* red */
+  if ((!fill_column_p
+       && current_col % 2 != 0)
+      || (fill_column_p
+          && current_col % 2 != 0
+          && current_col <= fill_col))
+    {
+      essentials->ch_fg[PRE_ZV].red = odd_pre_zv_fg.red;
+      essentials->ch_fg[PRE_ZV].green = odd_pre_zv_fg.green;
+      essentials->ch_fg[PRE_ZV].blue = odd_pre_zv_fg.blue;
+      essentials->ch_fg[AT_ZV].red = odd_at_zv_fg.red;
+      essentials->ch_fg[AT_ZV].green = odd_at_zv_fg.green;
+      essentials->ch_fg[AT_ZV].blue = odd_at_zv_fg.blue;
+      essentials->ch_fg[POST_ZV].red = odd_post_zv_fg.red;
+      essentials->ch_fg[POST_ZV].green = odd_post_zv_fg.green;
+      essentials->ch_fg[POST_ZV].blue = odd_post_zv_fg.blue;
+    }
+    /* yellow */
+    else if ((!fill_column_p
+              && current_col % 2 == 0)
+             || (fill_column_p
+                 && current_col % 2 == 0
+                 && current_col <= fill_col))
+      {
+        essentials->ch_fg[PRE_ZV].red = even_pre_zv_fg.red;
+        essentials->ch_fg[PRE_ZV].green = even_pre_zv_fg.green;
+        essentials->ch_fg[PRE_ZV].blue = even_pre_zv_fg.blue;
+        essentials->ch_fg[AT_ZV].red = even_at_zv_fg.red;
+        essentials->ch_fg[AT_ZV].green = even_at_zv_fg.green;
+        essentials->ch_fg[AT_ZV].blue = even_at_zv_fg.blue;
+        essentials->ch_fg[POST_ZV].red = even_post_zv_fg.red;
+        essentials->ch_fg[POST_ZV].green = even_post_zv_fg.green;
+        essentials->ch_fg[POST_ZV].blue = even_post_zv_fg.blue;
+      }
+      /* green */
+      else if (fill_column_p
+               && current_col > fill_col)
+        {
+          essentials->ch_fg[PRE_ZV].red = post_fill_pre_zv_fg.red;
+          essentials->ch_fg[PRE_ZV].green = post_fill_pre_zv_fg.green;
+          essentials->ch_fg[PRE_ZV].blue = post_fill_pre_zv_fg.blue;
+          essentials->ch_fg[AT_ZV].red = post_fill_at_zv_fg.red;
+          essentials->ch_fg[AT_ZV].green = post_fill_at_zv_fg.green;
+          essentials->ch_fg[AT_ZV].blue = post_fill_at_zv_fg.blue;
+          essentials->ch_fg[POST_ZV].red = post_fill_post_zv_fg.red;
+          essentials->ch_fg[POST_ZV].green = post_fill_post_zv_fg.green;
+          essentials->ch_fg[POST_ZV].blue = post_fill_post_zv_fg.blue;
+        }
+}
+
+void
+mc_color_picker (struct window *w, struct glyph *glyph, struct mc_essentials essentials,
+                    struct mc_RGB *lsl_fg, int posint, enum mc_cursor_type cursor_type,
+                    enum mc_row_position row_position, enum mc_engine_type action_type)
+{
+  switch (action_type)
+  {
+    case MULTIPLE_CURSORS:
+    {
+      struct frame *f = XFRAME (w->frame);
+      ptrdiff_t current_col = mc_current_column (w, posint);
+      struct buffer *b = XBUFFER (w->contents);
+      bool fill_column_p = !NILP (BVAR (b, fill_column));
+      int fill_col = (fill_column_p)
+                     ? XFIXNUM (BVAR (b, fill_column))
+                     : 0;
+      enum face_id even_face_id =
+        (!essentials.active_p
+         && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+        ? lookup_named_face (w, f, intern ("+-even-inactive-pre-zv-face"), true)
+        : lookup_named_face (w, f, intern ("+-even-pre-zv-face"), true);
+      struct face *even_face = FACE_FROM_ID (f, even_face_id);
+      Lisp_Object even_color = even_face->lface[LFACE_FOREGROUND_INDEX];
+      struct mc_RGB even_foreground;
+      mc_xw_color_values (w, even_color, &even_foreground);
+      enum face_id odd_face_id =
+        (!essentials.active_p
+         && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+        ? lookup_named_face (w, f, intern ("+-odd-inactive-pre-zv-face"), true)
+        : lookup_named_face (w, f, intern ("+-odd-pre-zv-face"), true);
+      struct face *odd_face = FACE_FROM_ID (f, odd_face_id);
+      Lisp_Object odd_color = odd_face->lface[LFACE_FOREGROUND_INDEX];
+      struct mc_RGB odd_foreground;
+      mc_xw_color_values (w, odd_color, &odd_foreground);
+      enum face_id beyond_fill_face_id =
+        (!essentials.active_p
+         && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+        ? lookup_named_face (w, f, intern ("+-post-fill-inactive-pre-zv-face"), true)
+        : lookup_named_face (w, f, intern ("+-post-fill-pre-zv-face"), true);
+      struct face *beyond_fill_face = FACE_FROM_ID (f, beyond_fill_face_id);
+      Lisp_Object beyond_fill_color = beyond_fill_face->lface[LFACE_FOREGROUND_INDEX];
+      struct mc_RGB beyond_fill_foreground;
+      mc_xw_color_values (w, beyond_fill_color, &beyond_fill_foreground);
+      /* red */
+      if ((!fill_column_p
+           && current_col % 2 != 0
+           && row_position == PRE_ZV)
+          || (fill_column_p
+              && current_col % 2 != 0
+              && current_col <= fill_col
+              && row_position == PRE_ZV))
+        {
+          lsl_fg->red = odd_foreground.red;
+          lsl_fg->green = odd_foreground.green;
+          lsl_fg->blue = odd_foreground.blue;
+        }
+        /* yellow */
+        else if ((!fill_column_p
+                  && current_col % 2 == 0
+                  && row_position == PRE_ZV)
+                 || (fill_column_p
+                     && current_col % 2 == 0
+                     && current_col <= fill_col
+                     && row_position == PRE_ZV))
+          {
+            lsl_fg->red = even_foreground.red;
+            lsl_fg->green = even_foreground.green;
+            lsl_fg->blue = even_foreground.blue;
+          }
+          /* green */
+          else if (fill_column_p
+                   && current_col > fill_col
+                   && row_position == PRE_ZV)
+            {
+              lsl_fg->red = beyond_fill_foreground.red;
+              lsl_fg->green = beyond_fill_foreground.green;
+              lsl_fg->blue = beyond_fill_foreground.blue;
+            }
+            else if (row_position == AT_ZV)
+              {
+                lsl_fg->red = essentials.sp_fg.red;
+                lsl_fg->green = essentials.sp_fg.green;
+                lsl_fg->blue = essentials.sp_fg.blue;
+              }
+      break;
+    }
+    case HORIZONTAL_RULER:
+    {
+      if (glyph != NULL
+          && glyph->u.ch == 95
+          && cursor_type == MC_HBAR)
+        {
+          lsl_fg->red = essentials.sp_fg.red;
+          lsl_fg->green = essentials.sp_fg.green;
+          lsl_fg->blue = essentials.sp_fg.blue;
+        }
+        else
+          {
+            lsl_fg->red = essentials.ch_fg[row_position].red;
+            lsl_fg->green = essentials.ch_fg[row_position].green;
+            lsl_fg->blue = essentials.ch_fg[row_position].blue;
+          }
+      break;
+    }
+    case VERTICAL_RULER:
+    {
+      lsl_fg->red = essentials.ch_fg[row_position].red;
+      lsl_fg->green = essentials.ch_fg[row_position].green;
+      lsl_fg->blue = essentials.ch_fg[row_position].blue;
+      break;
+    }
+    case FILL_COLUMN:
+    {
+      lsl_fg->red = essentials.fc_fg[row_position].red;
+      lsl_fg->green = essentials.fc_fg[row_position].green;
+      lsl_fg->blue = essentials.fc_fg[row_position].blue;
+      break;
+    }
+    case CURSOR_INDICATOR:
+    {
+      struct frame *f = XFRAME (w->frame);
+      enum face_id cursor_face_id =
+        (!essentials.active_p
+         && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows))
+         && row_position == PRE_ZV)
+          ? lookup_named_face (w, f, intern ("+-real-fake-cursor-inactive-pre-zv-face"), true)
+        : (essentials.active_p
+           && row_position == PRE_ZV)
+          ? lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true)
+        : (!essentials.active_p
+           && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows))
+           && row_position == AT_ZV)
+            ? lookup_named_face (w, f, intern ("+-real-fake-cursor-inactive-at-zv-face"), true)
+        : (essentials.active_p
+           && row_position == AT_ZV)
+          ? lookup_named_face (w, f, intern ("+-real-fake-cursor-at-zv-face"), true)
+        : lookup_named_face (w, f, intern ("+-real-fake-cursor-at-zv-face"), true);
+      struct face *cursor_face = FACE_FROM_ID (f, cursor_face_id);
+      Lisp_Object cursor_color = cursor_face->lface[LFACE_FOREGROUND_INDEX];
+      mc_xw_color_values (w, cursor_color, lsl_fg);
+      break;
+    }
+  }
+}
+
+/* Draw glyphs between START and END in AREA of ROW on window W,
+   starting at x-position X.  X is relative to AREA in W.  HL is a
+   face-override with the following meaning:
+   -  DRAW_NORMAL_TEXT  draw normally
+   -  DRAW_CURSOR    draw in cursor face
+   -  DRAW_MOUSE_FACE  draw in mouse face.
+   -  DRAW_INVERSE_VIDEO  draw in mode line face
+   -  DRAW_IMAGE_SUNKEN  draw an image with a sunken relief around it
+   -  DRAW_IMAGE_RAISED  draw an image with a raised relief around it
+   If OVERLAPS is non-zero, draw only the foreground of characters and
+   clip to the physical height of ROW.  Non-zero value also defines
+   the overlapping part to be drawn:
+   -  OVERLAPS_PRED    overlap with preceding rows
+   -  OVERLAPS_SUCC    overlap with succeeding rows
+   -  OVERLAPS_BOTH    overlap with both preceding/succeeding rows
+   -  OVERLAPS_ERASED_CURSOR  overlap with erased cursor area
+   Value is the x-position reached, relative to AREA of W. */
+int
+mc_draw_glyphs (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                struct mc_matrix mc_matrix, int x, enum glyph_row_area area,
+                ptrdiff_t start, ptrdiff_t end, enum draw_glyphs_face hl,
+                int overlaps, int vpos, struct mc_RGB lsl,
+                enum mc_flavor glyph_flavor, enum mc_cursor_type cursor_type,
+                int wd, bool active_p, bool cursor_gc_p,
+                enum draw_glyph_action action_type, bool draw_p)
+{
+  int start_x = x;
+  int relative_x = 0;
+  int length = 0;
+  //  if (mc_stderr_p)
+  //    {
+  //      int start_hpos = start;
+  //      int end_hpos = end;
+  //      fprintf (stderr, "mc_draw_glyphs (%d):  start_x (%d) | start_hpos (%d) | end_hpos (%d)\n",
+  //                       vpos, start_x, start_hpos, end_hpos);
+  //    }
+  struct frame *f = XFRAME (WINDOW_FRAME (w));
+  struct glyph_string *head, *tail;
+  struct glyph_string *s;
+  struct glyph_string *clip_head = NULL, *clip_tail = NULL;
+  int i, j, x_reached, last_x, area_left = 0;
+  MC_DECLARE_HDC (hdc);
+  MC_ALLOCATE_HDC (hdc, f);
+  /* Let's rather be paranoid than getting a SEGV. */
+  end = min (end, row->used[area]);
+  start = clip_to_bounds (0, start, end);
+  /* Translate X to frame coordinates.  Set last_x to the right
+     end of the drawing area. */
+  if (row->full_width_p)
+    {
+      /* X is relative to the left edge of W, without scroll bars
+   or fringes. */
+      area_left = WINDOW_LEFT_EDGE_X (w);
+      last_x = (WINDOW_LEFT_EDGE_X (w) + WINDOW_PIXEL_WIDTH (w)
+                - (row->mode_line_p ? WINDOW_RIGHT_DIVIDER_WIDTH (w) : 0));
+    }
+    else
+      {
+        area_left = window_box_left (w, area);
+        last_x = area_left + window_box_width (w, area);
+      }
+  x += area_left;
+  /* Build a doubly-linked list of glyph_string structures between
+     head and tail from what we have to draw.  Note that the macro
+     MC_BUILD_GLYPH_STRINGS will modify its start parameter.  That's
+     the reason we use a separate variable `i'. */
+  i = start;
+  USE_SAFE_ALLOCA;
+  MC_BUILD_GLYPH_STRINGS (i, end, head, tail, hl, x, last_x);
+  if (tail)
+    {
+      s = glyph_string_containing_background_width (tail);
+      x_reached = s->x + s->background_width;
+    }
+    else
+      x_reached = x;
+  /* If there are any glyphs with lbearing < 0 or rbearing > width in
+     the row, redraw some glyphs in front or following the glyph
+     strings built above. */
+  if (head && !overlaps && row->contains_overlapping_glyphs_p)
+    {
+      struct glyph_string *h, *t;
+      Mouse_HLInfo *hlinfo = MOUSE_HL_INFO (f);
+      int mouse_beg_col UNINIT, mouse_end_col UNINIT;
+      bool check_mouse_face = false;
+      int dummy_x = 0;
+      /* If mouse highlighting is on, we may need to draw adjacent
+   glyphs using mouse-face highlighting. */
+      if (area == TEXT_AREA && row->mouse_face_p
+          && hlinfo->mouse_face_beg_row >= 0
+          && hlinfo->mouse_face_end_row >= 0)
+        {
+          ptrdiff_t row_vpos = MATRIX_ROW_VPOS (row, w->current_matrix);
+          if (row_vpos >= hlinfo->mouse_face_beg_row
+              && row_vpos <= hlinfo->mouse_face_end_row)
+            {
+              check_mouse_face = true;
+              mouse_beg_col = (row_vpos == hlinfo->mouse_face_beg_row)
+                              ? hlinfo->mouse_face_beg_col
+                              : 0;
+              mouse_end_col = (row_vpos == hlinfo->mouse_face_end_row)
+                              ? hlinfo->mouse_face_end_col
+                              : row->used[TEXT_AREA];
+            }
+        }
+      /* Compute overhangs for all glyph strings. */
+      if (FRAME_RIF (f)->compute_glyph_string_overhangs)
+        for (s = head; s; s = s->next)
+          FRAME_RIF (f)->compute_glyph_string_overhangs (s);
+      /* Prepend glyph strings for glyphs in front of the first glyph
+      string that are overwritten because of the first glyph
+      string's left overhang.  The background of all strings
+      prepended must be drawn because the first glyph string
+      draws over it. */
+      i = left_overwritten (head);
+      if (i >= 0)
+        {
+          enum draw_glyphs_face overlap_hl;
+          /* If this row contains mouse highlighting, attempt to draw
+             the overlapped glyphs with the correct highlight.  This
+             code fails if the overlap encompasses more than one glyph
+             and mouse-highlight spans only some of these glyphs.
+             However, making it work perfectly involves a lot more
+             code, and I don't know if the pathological case occurs in
+             practice, so we'll stick to this for now.  --- cyd  */
+          if (check_mouse_face
+              && mouse_beg_col < start && mouse_end_col > i)
+            overlap_hl = DRAW_MOUSE_FACE;
+            else
+              overlap_hl = DRAW_NORMAL_TEXT;
+          if (hl != overlap_hl)
+            clip_head = head;
+          j = i;
+          MC_BUILD_GLYPH_STRINGS (j, start, h, t, overlap_hl, dummy_x, last_x);
+          /* The `left_overwritten` behavior that erases the fake cursors traces to
+          `font->driver->draw` in `ns_draw_glyph_string'; and, the height of the rectangle
+          drawn by `ns_dumpglyphs_stretch'; and, `ns_maybe_dumpglyphs_background' which
+          erases the applicable rectangle. */
+          /* EXAMPLE:  	M
+          In this example, we have a visible 187 (») that is followed by a visible
+          TAB_STRETCH (as a result of a corresponding `buffer-display-table' entry),
+          followed by wide "M", followed by a space at the end of the glyph row
+          (which has no buffer position).  When placing a fake cursor on the "M",
+          hl == DRAW_CURSOR and the STRETCH_GLYPH is `left_overwritten`.  Drawing
+          normal text during `update_window' (DRAW_NORMAL_TEXT) can also erase fake
+          cursors that are `left_overwritten'. */
+          length = 0;
+          for (s = h; s; s = s->next)
+            {
+              s->left_overwritten_p = true;
+              s->action_type = action_type;
+              length += s->first_glyph->pixel_width;
+            }
+          relative_x = start_x - length;
+          for (s = h; s; s = s->next)
+            {
+              s->first_glyph->relative_x = relative_x;
+              relative_x += s->first_glyph->pixel_width;
+            }
+          start = i;
+          compute_overhangs_and_x (t, head->x, true);
+          prepend_glyph_string_lists (&head, &tail, h, t);
+          if (clip_head == NULL)
+            clip_head = head;
+        }
+      /* Prepend glyph strings for glyphs in front of the first glyph
+      string that overwrite that glyph string because of their
+      right overhang.  For these strings, only the foreground must
+      be drawn, because it draws over the glyph string at `head'.
+      The background must not be drawn because this would overwrite
+      right overhangs of preceding glyphs for which no glyph
+      strings exist. */
+      i = left_overwriting (head);
+      if (i >= 0)
+        {
+          enum draw_glyphs_face overlap_hl;
+          if (check_mouse_face
+              && mouse_beg_col < start && mouse_end_col > i)
+            overlap_hl = DRAW_MOUSE_FACE;
+            else
+              overlap_hl = DRAW_NORMAL_TEXT;
+          if (hl == overlap_hl || clip_head == NULL)
+            clip_head = head;
+          MC_BUILD_GLYPH_STRINGS (i, start, h, t, overlap_hl, dummy_x, last_x);
+          for (s = h; s; s = s->next)
+            s->background_filled_p = true;
+          compute_overhangs_and_x (t, head->x, true);
+          prepend_glyph_string_lists (&head, &tail, h, t);
+        }
+      /* Append glyphs strings for glyphs following the last glyph
+      string tail that are overwritten by tail.  The background of
+      these strings has to be drawn because tail's foreground draws
+      over it. */
+      i = right_overwritten (tail);
+      if (i >= 0)
+        {
+          enum draw_glyphs_face overlap_hl;
+          if (check_mouse_face
+              && mouse_beg_col < i && mouse_end_col > end)
+            overlap_hl = DRAW_MOUSE_FACE;
+            else
+              overlap_hl = DRAW_NORMAL_TEXT;
+          if (hl != overlap_hl)
+            clip_tail = tail;
+          MC_BUILD_GLYPH_STRINGS (end, i, h, t, overlap_hl, x, last_x);
+        /* The `right_overwritten` behavior that erases the fake cursors traces to
+        `font->driver->draw` in `ns_draw_glyph_string'; and, the height of the rectangle
+        drawn by `ns_dumpglyphs_stretch'; and, `ns_maybe_dumpglyphs_background' which
+        erases the applicable rectangle. */
+        /* EXAMPLE:  "Emacs Guided Tour	Overview".
+        right_overwritten (GNU Emacs welcome screen without `buffer-display-table')
+        and the real fake cursor is to the immediate right of the word "Tour": */
+        relative_x = start_x;
+        for (s = h; s; s = s->next)
+          {
+            s->right_overwritten_p = true;
+            s->action_type = action_type;
+            relative_x += s->first_glyph->pixel_width;
+            s->first_glyph->relative_x = relative_x;
+          }
+          /* Because MC_BUILD_GLYPH_STRINGS updates the first argument,
+          we don't have `end = i;' here. */
+          compute_overhangs_and_x (h, tail->x + tail->width, false);
+          append_glyph_string_lists (&head, &tail, h, t);
+          if (clip_tail == NULL)
+            clip_tail = tail;
+        }
+      /* Append glyph strings for glyphs following the last glyph
+      string tail that overwrite tail.  The foreground of such
+      glyphs has to be drawn because it writes into the background
+      of tail.  The background must not be drawn because it could
+      paint over the foreground of following glyphs. */
+      i = right_overwriting (tail);
+      if (i >= 0)
+        {
+          enum draw_glyphs_face overlap_hl;
+          if (check_mouse_face
+              && mouse_beg_col < i && mouse_end_col > end)
+            overlap_hl = DRAW_MOUSE_FACE;
+            else
+              overlap_hl = DRAW_NORMAL_TEXT;
+          if (hl == overlap_hl || clip_tail == NULL)
+            clip_tail = tail;
+          i++;      /* We must include the Ith glyph. */
+          MC_BUILD_GLYPH_STRINGS (end, i, h, t, overlap_hl, x, last_x);
+          for (s = h; s; s = s->next)
+            s->background_filled_p = true;
+          compute_overhangs_and_x (h, tail->x + tail->width, false);
+          append_glyph_string_lists (&head, &tail, h, t);
+        }
+      tail = glyph_string_containing_background_width (tail);
+      if (clip_tail)
+        clip_tail = glyph_string_containing_background_width (clip_tail);
+      if (clip_head || clip_tail)
+        for (s = head; s; s = s->next)
+          {
+            s->clip_head = clip_head;
+            s->clip_tail = clip_tail;
+          }
+    }
+  /* Draw all strings. */
+  for (s = head; s && draw_p; s = s->next)
+    FRAME_RIF (f)->mc_scribe_string (s, matrix, row, mc_matrix, lsl, glyph_flavor,
+                                     cursor_type, wd, active_p, cursor_gc_p);
+#ifndef HAVE_NS
+  /* When focus a sole frame and move horizontally, this clears on_p
+     causing a failure to erase prev cursor position. */
+  if (area == TEXT_AREA
+      && !row->full_width_p
+      /* When drawing overlapping rows, only the glyph strings'
+      foreground is drawn, which doesn't erase a cursor completely. */
+      && !overlaps)
+    {
+      int x0 = clip_head ? clip_head->x : (head ? head->x : x);
+      int x1 = (clip_tail ? clip_tail->x + clip_tail->background_width
+                          : (tail ? tail->x + tail->background_width : x));
+      x0 -= area_left;
+      x1 -= area_left;
+      notice_overwritten_cursor (w, TEXT_AREA, x0, x1,
+         row->y, MATRIX_ROW_BOTTOM_Y (row));
+    }
+#endif
+  /* Value is the x-position up to which drawn, relative to AREA of W.
+     This doesn't include parts drawn because of overhangs. */
+  if (row->full_width_p)
+    x_reached = FRAME_TO_WINDOW_PIXEL_X (w, x_reached);
+  else
+    x_reached -= area_left;
+  MC_RELEASE_HDC (hdc, f);
+  SAFE_FREE ();
+  return x_reached;
+}
+
+/* Draw the cursor glyph of window W in glyph row ROW.  See the
+   comment of draw_glyphs for the meaning of HL. */
+void
+mc_draw_cursor_glyph (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                      enum draw_glyphs_face hl, int x, int hpos, int vpos,
+                      struct mc_RGB lsl, enum mc_flavor glyph_flavor,
+                      enum mc_cursor_type cursor_type, int wd, bool active_p,
+                      bool cursor_gc_p)
+{
+  //  struct glyph *cursor_glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+  //  fprintf (stderr, "mc_draw_cursor_glyph:  ch (%d) | x (%d), hpos (%d), vpos(%d), hl (%d)\n",
+  //                    cursor_glyph->u.ch, x, hpos, vpos, hl);
+  block_input ();
+  bool draw_p = true;
+  mc_draw_glyphs (w, matrix, row, w->mc_matrix, x, TEXT_AREA, hpos, hpos + 1, hl,
+                  0, vpos, lsl, glyph_flavor, cursor_type, wd, active_p,
+                  cursor_gc_p, MC_DRAW_GLYPH_STRING, draw_p);
+  unblock_input ();
+  /* When we erase the cursor, and ROW is overlapped by other rows, make
+  sure that these overlapping parts of other rows are redrawn. */
+  if (hl == DRAW_NORMAL_TEXT && row->overlapped_p)
+    {
+      if (row > matrix->rows
+          && MATRIX_ROW_OVERLAPS_SUCC_P (row - 1))
+        gui_fix_overlapping_area (w, row - 1, TEXT_AREA, OVERLAPS_ERASED_CURSOR);
+      if (MATRIX_ROW_BOTTOM_Y (row) < window_text_bottom_y (w)
+          && MATRIX_ROW_OVERLAPS_PRED_P (row + 1))
+        gui_fix_overlapping_area (w, row + 1, TEXT_AREA, OVERLAPS_ERASED_CURSOR);
+    }
+}
+
+void
+mc_erase_cursor (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                 struct mc_matrix mc_matrix, int x, int y, int hpos, int vpos,
+                 enum mc_flavor glyph_flavor, enum mc_cursor_type cursor_type, int wd)
+{
+  bool debug_p = false;
+  if (debug_p)
+    fprintf (stderr, "mc_erase_cursor:  x (%d) | y (%d) | hpos (%d) | vpos (%d) | wd (%d)\n\
+    glyph_flavor (%s) | cursor_type (%s)\n",
+    x, y, hpos, vpos, wd,
+    mc_flavor_to_string (glyph_flavor), mc_cursor_type_to_string (cursor_type));
+  struct frame *f = XFRAME (w->frame);
+  Mouse_HLInfo *hlinfo = MOUSE_HL_INFO (f);
+  bool mouse_face_here_p = false;
+  struct glyph *cursor_glyph;
+  enum draw_glyphs_face hl;
+  /* No cursor displayed or row invalidated => nothing to do on the screen. */
+  if (cursor_type == MC_NO_CURSOR)
+    {
+      if (debug_p)
+        fprintf (stderr, "mc_erase_cursor:  return (%d)\n", 1);
+      return;
+    }
+  /* VPOS >= matrix->nrows means that window has been resized.
+     Don't bother to erase the cursor. */
+  if (vpos >= matrix->nrows)
+    {
+      if (debug_p)
+        fprintf (stderr, "mc_erase_cursor:  return (%d)\n", 2);
+      return;
+    }
+  /* If row containing cursor is marked invalid, there is nothing we
+     can do. */
+  if (!row->enabled_p)
+    {
+      if (debug_p)
+        fprintf (stderr, "mc_erase_cursor:  return (%d)\n", 3);
+      return;
+    }
+  /* If line spacing is > 0, old cursor may only be partially visible in
+     window after split-window.  So adjust visible height. */
+  row->visible_height = min (row->visible_height,
+            window_text_bottom_y (w) - row->y);
+  /* If row is completely invisible, don't attempt to delete a cursor which
+     isn't there.  This can happen if cursor is at top of a window, and
+     we switch to a buffer with a header line in that window. */
+  if (row->visible_height <= 0)
+    {
+      if (debug_p)
+        fprintf (stderr, "mc_erase_cursor:  return (%d)\n", 4);
+      return;
+    }
+  /* If cursor is in the fringe, erase by drawing actual bitmap there. */
+  if (row->cursor_in_fringe_p
+      && glyph_flavor != MC_GLYPH)
+    {
+      row->cursor_in_fringe_p = false;
+      mc_draw_fringe_bitmap (w, row, row->reversed_p, cursor_type);
+      if (debug_p)
+        fprintf (stderr, "mc_erase_cursor:  return (%d)\n", 5);
+      return;
+    }
+  /* This can happen when the new row is shorter than the old one.
+     In this case, either draw_glyphs or clear_end_of_line
+     should have cleared the cursor.  Note that we wouldn't be
+     able to erase the cursor in this case because we don't have a
+     cursor glyph at hand. */
+  if ((row->reversed_p
+       ? (hpos < 0)
+       : (hpos >= row->used[TEXT_AREA])))
+    {
+      if (debug_p)
+        fprintf (stderr, "mc_erase_cursor:  return (%d)\n", 6);
+      return;
+    }
+  /* When the window is hscrolled, cursor hpos can legitimately be out
+     of bounds, but we draw the cursor at the corresponding window
+     margin in that case. */
+  if (!row->reversed_p && hpos < 0)
+    hpos = 0;
+  if (row->reversed_p && hpos >= row->used[TEXT_AREA])
+    hpos = row->used[TEXT_AREA] - 1;
+  /* If the cursor is in the mouse face area, redisplay that when we clear the cursor. */
+  if (! NILP (hlinfo->mouse_face_window)
+      && coords_in_mouse_face_p (w, hpos, vpos)
+      /* Don't redraw the cursor's spot in mouse face if it is at the
+      end of a line (on a newline).  The cursor appears there, but
+      mouse highlighting does not. */
+      && row->used[TEXT_AREA] > hpos && hpos >= 0)
+    mouse_face_here_p = true;
+  /* Maybe clear the display under the cursor. */
+  if (cursor_type == MC_HOLLOW_BOX
+      || cursor_type == MC_FRAMED_BOX)
+    {
+      int temp_x = x;
+      int header_line_height = WINDOW_HEADER_LINE_HEIGHT (w);
+      cursor_glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+      if (cursor_glyph == NULL)
+        {
+          if (debug_p)
+            fprintf (stderr, "mc_erase_cursor:  return (%d)\n", 7);
+          return;
+        }
+      int temp_wd = cursor_glyph->pixel_width;
+      if (temp_x < 0)
+        {
+          temp_wd += temp_x;
+          temp_x = 0;
+        }
+      temp_wd = min (wd, window_box_width (w, TEXT_AREA) - temp_x);
+      int fy = WINDOW_TO_FRAME_PIXEL_Y (w, max (header_line_height, row->y));
+      int fx = WINDOW_TEXT_TO_FRAME_PIXEL_X (w, temp_x);
+      if (temp_wd > 0)
+        FRAME_RIF (f)->clear_frame_area (f, fx, fy, temp_wd, row->visible_height);
+    }
+  /* Erase the cursor by redrawing the character underneath it. */
+  if (mouse_face_here_p)
+    hl = DRAW_MOUSE_FACE;
+    else
+      hl = DRAW_NORMAL_TEXT;
+  struct mc_RGB lsl = {.red = -1.0, .green = -1.0, .blue = -1.0};
+  bool active_p = false;
+  bool cursor_gc_p = false;
+  //  struct glyph *cursor_glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+  //  fprintf (stderr, "mc_draw_cursor_glyph:  ch (%d) | x (%d), hpos (%d), vpos(%d), hl (%d)\n",
+  //                    cursor_glyph->u.ch, x, hpos, vpos, hl);
+  block_input ();
+  bool draw_p = true;
+  mc_draw_glyphs (w, matrix, row, mc_matrix, x, TEXT_AREA, hpos, hpos + 1, hl, 0,
+                  vpos, lsl, glyph_flavor, cursor_type, wd, active_p,
+                  cursor_gc_p, MC_ERASE_GLYPH_STRING, draw_p);
+  unblock_input ();
+  /* When we erase the cursor, and ROW is overlapped by other rows, make
+  sure that these overlapping parts of other rows are redrawn. */
+  if (hl == DRAW_NORMAL_TEXT && row->overlapped_p)
+    {
+      if (row > matrix->rows
+          && MATRIX_ROW_OVERLAPS_SUCC_P (row - 1))
+        gui_fix_overlapping_area (w, row - 1, TEXT_AREA, OVERLAPS_ERASED_CURSOR);
+      if (MATRIX_ROW_BOTTOM_Y (row) < window_text_bottom_y (w)
+          && MATRIX_ROW_OVERLAPS_PRED_P (row + 1))
+        gui_fix_overlapping_area (w, row + 1, TEXT_AREA, OVERLAPS_ERASED_CURSOR);
+    }
+}
+
+/*
+- Draw all glyph cursors, but erase with `mc_erase_cursor'.
+- Draw/erase all glyphless cursors.
+- When `!remove_p`, set the row data relating to fringe bitmaps.
+  `draw_row_fringe_bitmaps' (within `expose_line' and `draw_window_fringes')
+  is the mechanism that draws the fringe bitmaps. */
+void
+mc_draw_erase_hybrid (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                      int x, int fx, int y, int fy, int hpos, int vpos, int wd, int h,
+                      enum mc_cursor_type cursor_type, int cursor_width,
+                      struct mc_RGB lsl, bool active_p, enum mc_flavor glyph_flavor,
+                      bool remove_p)
+{
+  /* `matrix_row' in `dispnew.c` contains the following tests,
+  eassert (matrix && matrix->rows);
+  eassert (row >= 0 && row < matrix->nrows); */
+  bool barf_crash_one = (matrix && matrix->rows) ? false : true;
+  if (barf_crash_one)
+    return;
+  bool barf_crash_two = (vpos >= 0 && vpos < matrix->nrows) ? false : true;
+  if (barf_crash_two)
+    return;
+  if (x < 0
+      || y < 0
+      || hpos < 0
+      || vpos < 0)
+    return;
+  struct frame *f = XFRAME (w->frame);
+  bool auto_hscroll_mode_p = EQ (Fbuffer_local_value (Qauto_hscroll_mode, w->contents), Qcurrent_line);
+  /* EXAMPLE:  (scroll-left 5) */
+  bool hscl_all_temp_p = (w->suspend_auto_hscroll
+                          && auto_hscroll_mode_p
+                          && w->hscroll > 0
+                          && w->min_hscroll == 0);
+  /* EXAMPLE:  C-u C-x < and do nothing. */
+  bool hscl_all_perm_0_p = (w->suspend_auto_hscroll
+                            && auto_hscroll_mode_p
+                            && w->hscroll > 0
+                            && w->min_hscroll > 0
+                            && w->min_hscroll == w->hscroll);
+  /* EXAMPLE:  C-u C-x < and do something else besides horizontally scrolling the
+               current line differently.
+               Current line is _not_ horizontally scrolled differently. */
+  bool hscl_all_perm_1_p = (!w->suspend_auto_hscroll
+                            && auto_hscroll_mode_p
+                            && w->hscroll > 0
+                            && w->min_hscroll > 0
+                            && w->min_hscroll == w->hscroll);
+  /* EXAMPLE:  C-u C-x < and ...
+               Current line is _not_ horizontally scrolled differently. */
+  bool hscl_all_perm_2_p = (!w->suspend_auto_hscroll
+                            && auto_hscroll_mode_p
+                            && w->hscroll == 0
+                            && w->min_hscroll > 0
+                            && w->min_hscroll != w->hscroll);
+  /* EXAMPLE:  (scroll-left 5); and, then press the left arrow key one time.
+               Current line _is_ horizontally scrolled differently.*/
+  bool hscl_temp_p = (!w->suspend_auto_hscroll
+                      && auto_hscroll_mode_p
+                      && w->hscroll > 0
+                      && w->min_hscroll == 0);
+  /* EXAMPLE:  C-u C-x < and do something that causes the current line to be
+               horizontally scrolled differently.
+               Current line _is_ horizontally scrolled differently. */
+  bool hscl_perm_p = (!w->suspend_auto_hscroll
+                      && auto_hscroll_mode_p
+                      && w->hscroll > 0
+                      && w->min_hscroll > 0
+                      && w->min_hscroll != w->hscroll);
+  int fringe_bitmap = MC_NO_FRINGE_BITMAP;
+  int face_id = DEFAULT_FACE_ID;
+  if (!remove_p
+      && glyph_flavor == MC_OVERLAY_ARROW_BITMAP
+      && !hscl_all_temp_p
+      && !hscl_temp_p
+      && !hscl_perm_p
+      && !hscl_all_perm_0_p
+      && !hscl_all_perm_1_p
+      && !hscl_all_perm_2_p)
+    {
+      enum face_id overlay_arrow_face_id =
+        (!active_p
+         && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+        ? lookup_derived_face (w, f, intern ("+-overlay-arrow-inactive-pre-zv-face"), FRINGE_FACE_ID, true)
+        : (active_p)
+          ? lookup_derived_face (w, f, intern ("+-overlay-arrow-pre-zv-face"), FRINGE_FACE_ID, true)
+        : DEFAULT_FACE_ID;
+      face_id = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                ? overlay_arrow_face_id
+                : DEFAULT_FACE_ID;
+      if (w->hscroll != 0)
+        fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-overlay-arrow"), false, true);
+        else
+          fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-overlay-arrow"), true, true);
+      row->left_fringe_bitmap = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                                ? fringe_bitmap
+                                : MC_NO_FRINGE_BITMAP;
+      row->left_fringe_face_id = face_id;
+      row->left_fringe_offset = 0;
+      row->fringe_bitmap_periodic_p = false;
+    }
+    else if (!remove_p
+             && glyph_flavor == MC_OVERLAY_ARROW_BITMAP
+             && (hscl_all_temp_p
+                 || hscl_all_perm_0_p
+                 || hscl_all_perm_1_p
+                 || hscl_all_perm_2_p
+                 || hscl_temp_p
+                 || hscl_perm_p))
+      {
+        enum face_id overlay_arrow_face_id =
+          (!active_p
+           && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+          ? lookup_derived_face (w, f, intern ("+-overlay-arrow-hscl-inactive-pre-zv-face"), FRINGE_FACE_ID, true)
+          : (active_p)
+            ? lookup_derived_face (w, f, intern ("+-overlay-arrow-hscl-pre-zv-face"), FRINGE_FACE_ID, true)
+          : DEFAULT_FACE_ID;
+        face_id = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                  ? overlay_arrow_face_id
+                  : DEFAULT_FACE_ID;
+        if (hscl_all_perm_0_p)
+          fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), false, false);
+          else if (hscl_all_perm_1_p)
+            fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), true, false);
+            else if (hscl_all_perm_2_p)
+              fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), false, true);
+              else if (hscl_perm_p)
+                fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), true, true);
+                else if (hscl_all_temp_p)
+                  fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-temp"), false, false);
+                  else if (hscl_temp_p)
+                    fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-temp"), true, false);
+        row->left_fringe_bitmap = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                                  ? fringe_bitmap
+                                  : MC_NO_FRINGE_BITMAP;
+        row->left_fringe_face_id = face_id;
+        row->left_fringe_offset = 0;
+        row->fringe_bitmap_periodic_p = false;
+      }
+      else if (!remove_p
+               && (glyph_flavor == MC_HOLLOW_RECTANGLE_RIGHT_ARROW
+                   || glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                   || glyph_flavor == MC_HOLLOW_RECTANGLE
+                   || glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW
+                   || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                   || glyph_flavor == MC_VERTICAL_BAR
+                   || glyph_flavor == MC_REVERSED_VERTICAL_BAR
+                   || glyph_flavor == MC_VERTICAL_BAR_BACKSLASH))
+        {
+          Lisp_Object bitmap_flavor = (glyph_flavor == MC_HOLLOW_RECTANGLE_RIGHT_ARROW)
+                                      ? Qmc_hollow_rectangle_right_arrow
+                                      : (glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW)
+                                        ? Qmc_reversed_hollow_rectangle_right_arrow
+                                      : (glyph_flavor == MC_HOLLOW_RECTANGLE)
+                                        ? Qmc_hollow_rectangle
+                                      : (glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW)
+                                        ? Qmc_vertical_bar_right_arrow
+                                      : (glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW)
+                                        ? Qmc_reversed_vertical_bar_right_arrow
+                                      : (glyph_flavor == MC_VERTICAL_BAR)
+                                        ? Qmc_vertical_bar
+                                      : (glyph_flavor == MC_REVERSED_VERTICAL_BAR)
+                                        ? Qmc_reversed_vertical_bar
+                                      : (glyph_flavor == MC_VERTICAL_BAR_BACKSLASH)
+                                        ? Qmc_vertical_bar_backslash
+                                      : Qnil;
+          fringe_bitmap = (cursor_type == MC_RIGHT_FRINGE_BITMAP)
+                          ? lookup_fringe_bitmap (bitmap_flavor)
+                          : MC_NO_FRINGE_BITMAP;
+          face_id = (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                     && (glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                         || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                         || glyph_flavor == MC_REVERSED_VERTICAL_BAR))
+                      ? lookup_derived_face (w, f, intern ("+-reversed-bar-pre-zv-face"), FRINGE_FACE_ID, true)
+                    : (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                       && glyph_flavor != MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                       && glyph_flavor != MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                       && glyph_flavor != MC_REVERSED_VERTICAL_BAR)
+                      ? lookup_derived_face (w, f, intern ("+-bar-pre-zv-face"), FRINGE_FACE_ID, true)
+                    : DEFAULT_FACE_ID;
+          row->cursor_in_fringe_p = false;
+          row->right_fringe_bitmap = fringe_bitmap;
+          row->right_fringe_face_id = face_id;
+          row->right_fringe_offset = 0;
+          row->fringe_bitmap_periodic_p = false;
+        }
+        else if (glyph_flavor == MC_GLYPH
+                 || glyph_flavor == MC_GLYPHLESS)
+          {
+            bool on_p = true;
+            FRAME_RIF (f)->mc_scribe_cursor (w, matrix, row, x, fx, y, fy, hpos,
+                                             vpos, wd, h, lsl, cursor_type,
+                                             cursor_width, glyph_flavor, on_p,
+                                             active_p);
+          }
+}
+
+/* Dump contents of glyph GLYPH to stderr.  ROW and AREA are
+   the glyph row and area where the glyph comes from. */
+void
+mc_dump_glyph (struct glyph_row *row, struct glyph *glyph, int area,
+               int relative_x, int vpos)
+{
+  bool glyph_zv_p = (glyph - row->glyphs[area] == row->used[area] - 1
+                     && MATRIX_ROW_END_CHARPOS (row) == ZV);
+  if (glyph->type == CHAR_GLYPH
+      || glyph->type == GLYPHLESS_GLYPH)
+    {
+      fprintf (stderr,
+        " %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x %4d %1.1d%1.1d  %3d %s %s\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        (glyph->type == CHAR_GLYPH
+         ? 'C'
+         : 'G'),
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+         ? 'B'
+         : (STRINGP (glyph->object)
+            ? 'S'
+            : (NILP (glyph->object)
+               ? '0'
+               : '-'))),
+        glyph->pixel_width,
+        glyph->u.ch,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        mc_char_to_string (glyph->u.ch));
+    }
+  else if (glyph->type == STRETCH_GLYPH)
+    {
+      fprintf (stderr,
+        " %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x %4d %1.1d%1.1d  %3d %s %s\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        'S',
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+            ? 'B'
+          : (STRINGP (glyph->object)
+            ? 'S'
+          : (NILP (glyph->object)
+            ? '0'
+          : '-'))),
+        glyph->pixel_width,
+        0u,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        "\\S");
+    }
+  else if (glyph->type == IMAGE_GLYPH)
+    {
+      fprintf (stderr,
+        " %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x %4d %1.1d%1.1d  %3d %s %c\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        'I',
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+            ? 'B'
+          : (STRINGP (glyph->object)
+            ? 'S'
+          : (NILP (glyph->object)
+            ? '0'
+          : '-'))),
+        glyph->pixel_width,
+        (unsigned int) glyph->u.img_id,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        '.');
+    }
+  else if (glyph->type == COMPOSITE_GLYPH)
+    {
+      fprintf (stderr,
+        " %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        '+',
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+            ? 'B'
+          : (STRINGP (glyph->object)
+            ? 'S'
+          : (NILP (glyph->object)
+            ? '0'
+          : '-'))),
+        glyph->pixel_width,
+        (unsigned int) glyph->u.cmp.id);
+      fprintf (stderr, " %4d %1.1d%1.1d",
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p);
+      if (glyph->u.cmp.automatic)
+        fprintf (stderr, "  %3d %s . [%d-%d]\n",
+                         glyph->hpos, glyph_zv_p ? "ZV" : "--",
+                         glyph->slice.cmp.from, glyph->slice.cmp.to);
+        else
+        fprintf (stderr, "\n");
+    }
+  else if (glyph->type == XWIDGET_GLYPH)
+    {
+#ifndef HAVE_XWIDGETS
+      eassume (false);
+#else
+      fprintf (stderr,
+        "  %5d/%-5d %5d %4c %6d %c %3d 0x%05x %4d %1.1d%1.1d  %3d %s %c\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        'X',
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+           ? 'B'
+         : (STRINGP (glyph->object)
+            ? 'S'
+         : '-')),
+        glyph->pixel_width,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->u.xwidget,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        '.');
+#endif
+    }
+}
+
+/* Dump the contents of glyph row at VPOS in MATRIX to stderr.
+   GLYPHS 0 means don't show glyph contents.
+   GLYPHS 1 means show glyphs in short form
+   GLYPHS > 1 means show glyphs in long form. */
+void
+mc_dump_glyph_row (struct glyph_row *row, int vpos, int glyphs)
+{
+  int relative_x = 0;
+  if (glyphs != 1)
+    {
+      fprintf (stderr, "\nDUMP GLYPH ROW\n");
+      fprintf (stderr, "Row     Start       End Used oE><\\CTZFesm     X    Y    W    H    V    A    P\n");
+      fprintf (stderr, "==============================================================================\n");
+      fprintf (stderr, "%3d %9"pD"d %9"pD"d %4d %1.1d%1.1d%1.1d%1.1d\
+%1.1d%1.1d%1.1d%1.1d%1.1d%1.1d%1.1d%1.1d  %4d %4d %4d %4d %4d %4d %4d\n",
+         vpos,
+         MATRIX_ROW_START_CHARPOS (row),
+         MATRIX_ROW_END_CHARPOS (row),
+         row->used[TEXT_AREA],
+         row->contains_overlapping_glyphs_p,
+         row->enabled_p,
+         row->truncated_on_left_p,
+         row->truncated_on_right_p,
+         row->continued_p,
+         MATRIX_ROW_CONTINUATION_LINE_P (row),
+         MATRIX_ROW_DISPLAYS_TEXT_P (row),
+         row->ends_at_zv_p,
+         row->fill_line_p,
+         row->ends_in_middle_of_char_p,
+         row->starts_in_middle_of_char_p,
+         row->mouse_face_p,
+         row->x,
+         row->y,
+         row->pixel_width,
+         row->height,
+         row->visible_height,
+         row->ascent,
+         row->phys_ascent);
+      /* The next 3 lines should align to "Start" in the header. */
+      fprintf (stderr, "    %9"pD"d %9"pD"d\t%5d\n", row->start.overlay_string_index,
+         row->end.overlay_string_index,
+         row->continuation_lines_width);
+      fprintf (stderr, "    %9"pD"d %9"pD"d\n",
+         CHARPOS (row->start.string_pos),
+         CHARPOS (row->end.string_pos));
+      fprintf (stderr, "    %9d %9d\n", row->start.dpvec_index,
+         row->end.dpvec_index);
+    }
+  if (glyphs > 1)
+    {
+      for (int area = LEFT_MARGIN_AREA; area < LAST_AREA; ++area)
+        {
+          struct glyph *glyph = row->glyphs[area];
+          struct glyph *glyph_end = glyph + row->used[area];
+          /* Glyph for a line end in text. */
+          if (area == TEXT_AREA && glyph == glyph_end && glyph->charpos > 0)
+            ++glyph_end;
+          if (glyph < glyph_end)
+            fprintf (stderr, "Glyph#/Total Rel.X T       Pos O   W     Code Face LR HPOS ZV C\n");
+          for (; glyph < glyph_end; ++glyph)
+            {
+              mc_dump_glyph (row, glyph, area, relative_x, vpos);
+              relative_x += glyph->pixel_width;
+            }
+        }
+    }
+    else if (glyphs == 1)
+      {
+        char s[SHRT_MAX + 4];
+        for (int area = LEFT_MARGIN_AREA; area < LAST_AREA; ++area)
+          {
+            int i;
+            for (i = 0; i < row->used[area]; ++i)
+              {
+                struct glyph *glyph = row->glyphs[area] + i;
+                if (i == row->used[area] - 1
+                    && area == TEXT_AREA
+                    && NILP (glyph->object)
+                    && glyph->type == CHAR_GLYPH
+                    && glyph->u.ch == ' ')
+                  {
+                    strcpy (&s[i], "[\\n]");
+                    i += 4;
+                  }
+                  else if (glyph->type == CHAR_GLYPH
+                           && glyph->u.ch < 0x80
+                           && glyph->u.ch >= ' ')
+                    s[i] = glyph->u.ch;
+                    else
+                      s[i] = '.';
+              }
+            s[i] = '\0';
+            fprintf (stderr, "%3d: (%d) '%s'\n", vpos, row->enabled_p, s);
+          }
+      }
+}
+
+DEFUN ("mc-dump-glyph-row", Fmc_dump_glyph_row, Smc_dump_glyph_row, 1, 2, "P",
+       doc: /* Dump glyph row ROW to stderr.
+Interactively, ROW is the prefix numeric argument and defaults to
+the row which displays point.
+Optional argument GLYPHS 0 means don't dump glyphs.
+GLYPHS 1 means dump glyphs in short form.
+GLYPHS > 1 or omitted means dump glyphs in long form.  */)
+  (Lisp_Object row, Lisp_Object glyphs)
+{
+  struct window *w = XWINDOW (selected_window);
+  struct glyph_matrix *matrix = w->current_matrix;
+  EMACS_INT vpos;
+  if (NILP (row))
+    {
+      int d1, d2, d3, d4, d5, ypos;
+      bool visible_p = pos_visible_p (w, PT, &d1, &d2, &d3, &d4, &d5, &ypos);
+      int header_line_height = WINDOW_HEADER_LINE_HEIGHT (w);
+      int voffset = (header_line_height > 0
+                     && ypos > 0)
+                      ? ypos + 1
+                      : ypos;
+      if (visible_p)
+        vpos = voffset;
+        else
+          vpos = 0;
+    }
+    else
+      {
+        CHECK_NUMBER (row);
+        vpos = XFIXNUM (row);
+      }
+  if (vpos >= 0 && vpos < matrix->nrows)
+    mc_dump_glyph_row (MATRIX_ROW (matrix, vpos),
+        vpos,
+        TYPE_RANGED_FIXNUMP (int, glyphs) ? XFIXNUM (glyphs) : 2);
+  return Qnil;
+}
+
+void
+mc_dump_glyph_matrix (struct glyph_matrix *matrix, int glyphs)
+{
+  int i;
+  for (i = 0; i < matrix->nrows; ++i)
+    mc_dump_glyph_row (MATRIX_ROW (matrix, i), i, glyphs);
+}
+
+DEFUN ("mc-dump-glyph-matrix", Fmc_dump_glyph_matrix,
+       Smc_dump_glyph_matrix, 0, 1, "p",
+       doc: /* Dump the current matrix of the selected window to stderr.
+Shows contents of glyph row structures.  With non-nil
+parameter GLYPHS, dump glyphs as well.  If GLYPHS is 1 show
+glyphs in short form, otherwise show glyphs in long form.
+- Interactively, no argument means show glyphs in short form;
+with numeric argument, its value is passed as the GLYPHS flag.  */)
+  (Lisp_Object glyphs)
+{
+  struct window *w = XWINDOW (selected_window);
+  struct buffer *buffer = XBUFFER (w->contents);
+  fprintf (stderr, "PT = %"pD"d, BEGV = %"pD"d. ZV = %"pD"d\n",
+     BUF_PT (buffer), BUF_BEGV (buffer), BUF_ZV (buffer));
+  fprintf (stderr, "Cursor x = %d, y = %d, hpos = %d, vpos = %d\n",
+     w->cursor.x, w->cursor.y, w->cursor.hpos, w->cursor.vpos);
+  fprintf (stderr, "=============================================\n");
+  mc_dump_glyph_matrix (w->current_matrix,
+         TYPE_RANGED_FIXNUMP (int, glyphs) ? XFIXNUM (glyphs) : 0);
+  return Qnil;
+}
+
+bool
+mc_traverse_cache_p (struct mc_matrix matrix, enum mc_cache_type cache_type,
+                     int vnth, int nth)
+{
+  if (vnth < matrix.vpos_used
+      && matrix.cursors_used[cache_type] > 0
+      && nth < matrix.vpos[vnth].cache_used[cache_type])
+    return true;
+    else
+      return false;
+}
+
+void
+mc_reset_cache (struct window *w)
+{
+  if (!BUFFERP (w->contents))
+    return;
+  for (enum mc_cache_type cache_type = MC_CACHE;
+       cache_type < NO_CACHE;
+       ++cache_type)
+    {
+      bool bvar_active_p;
+      switch (cache_type)
+        {
+          case NO_CACHE:
+            {
+              return;
+            }
+          case MC_CACHE:
+            {
+              if (BUFFERP (w->contents)
+                  && NILP (BVAR (XBUFFER (w->contents), mc_conf)))
+                bvar_active_p = false;
+                else if (BUFFERP (w->contents)
+                         && !NILP (BVAR (XBUFFER (w->contents), mc_conf)))
+                  bvar_active_p = true;
+              break;
+            }
+          case CH_CACHE:
+            {
+              if (BUFFERP (w->contents)
+                  && NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+                bvar_active_p = false;
+                else if (BUFFERP (w->contents)
+                         && !NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+                  bvar_active_p = true;
+              break;
+            }
+          case FC_CACHE:
+            {
+              if (BUFFERP (w->contents)
+                  && NILP (BVAR (XBUFFER (w->contents), fc_visible)))
+                bvar_active_p = false;
+                else if (BUFFERP (w->contents)
+                         && !NILP (BVAR (XBUFFER (w->contents), fc_visible)))
+                  bvar_active_p = true;
+              break;
+            }
+        }
+      if (!bvar_active_p)
+        {
+          /* Decrease the size of the array to a bare minimum. */
+          for (int vnth = 0; vnth < w->mc_matrix.vpos_used; ++vnth)
+            {
+              if (w->mc_matrix.vpos[vnth].cache_allocated[cache_type] > 1)
+                {
+                  w->mc_matrix.vpos[vnth].cache[cache_type] =
+                    xnrealloc (w->mc_matrix.vpos[vnth].cache[cache_type], 1,
+                               sizeof *w->mc_matrix.vpos[vnth].cache[cache_type]);
+                  w->mc_matrix.vpos[vnth].cache_allocated[cache_type] = 1;
+                }
+              w->mc_matrix.vpos[vnth].cache_used[cache_type] = 0;
+            }
+          w->mc_matrix.cursors_used[cache_type] = 0;
+        }
+        //  Although it would not be very efficient, it is possible to set
+        //  the _used_ elements of the array to zero.  In such a case, the
+        //  ..._elts.allocated[cache_type] would remain the same.
+        //  memset (w->mc_matrix.vpos[@].cache[cache_type], 0, w->mc_matrix.vpos[@].cache_used[cache_type]
+        //          * (sizeof *w->mc_matrix.vpos[@].cache[cache_type]));
+        //  At this time, we are instead leaving the array as-is with the
+        //  understanding that it will contain outdated data (aka garbage).
+        //  Using the counter `w->mc_matrix.vpos[@].cache_used[cache_type]`, we track current data.
+        else if (bvar_active_p)
+          {
+            for (int vnth = 0; vnth < w->mc_matrix.vpos_used; ++vnth)
+              w->mc_matrix.vpos[vnth].cache_used[cache_type] = 0;
+            w->mc_matrix.cursors_used[cache_type] = 0;
+          }
+    }
+}
+
+static void
+mc_helper (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+           struct glyph *glyph, int x, int fx, int y, int fy, int hpos, int vpos,
+           int wd, int h, enum mc_cursor_type cursor_type, int cursor_width,
+           enum mc_row_position row_position, struct mc_RGB foreground,
+           struct mc_RGB background, bool active_p, enum mc_flavor glyph_flavor,
+           bool draw_p, enum mc_draw_row_type from_where,
+           enum mc_cache_type cache_type, enum mc_engine_type action_type)
+{
+  int vnth = MATRIX_ROW_VPOS (row, matrix);
+  if (mc_stderr_p
+      && draw_p)
+    {
+      int charpos = glyph->charpos;
+      fprintf (stderr, "\nmc_helper (%s):  from_where (%s)\n\
+  action_type (%s) | flavor (%s) | charpos (%d)\n\
+  char (%s) | x (%d) | fx (%d) | y (%d) | fy (%d) | hpos (%d/%d) | vpos (%d)\n\
+  wd (%d) | h (%d) | cursor_type (%s) | cursor_width (%d) | active_p (%s)\n\
+  FG-RGB (%f/%f/%f) | BG-RGB (%f/%f/%f)\n",
+      mc_window (w), mc_draw_row_type_to_string (from_where),
+      mc_engine_type_to_string (action_type), mc_flavor_to_string (glyph_flavor),
+      charpos, mc_char_to_string (glyph->u.ch), x, fx, y, fy, hpos,
+      row->used[TEXT_AREA] - 1, vpos, wd, h, mc_cursor_type_to_string (cursor_type),
+      cursor_width, (active_p ? "true" : "false"), foreground.red, foreground.green,
+      foreground.blue, background.red, background.green, background.blue);
+    }
+  bool remove_p = false;
+  if (draw_p
+      && (from_where == SKIPPED
+          || from_where == POST_CHANGED
+          || from_where == UNCHANGED
+          || from_where == SET_CURSOR_TWO))
+    {
+      bool same_p = false;
+      for (int nth = 0; nth < w->mc_matrix.vpos[vnth].cache_used[cache_type]; ++nth)
+        {
+          same_p |=
+            (w->mc_matrix.vpos[vnth].cache[cache_type][nth].same_p == true
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.type == glyph->type
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.bytepos == glyph->bytepos
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.charpos == glyph->charpos
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.u.val == glyph->u.val
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.face_id == glyph->face_id
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.padding_p == glyph->padding_p
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.left_box_line_p == glyph->left_box_line_p
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.right_box_line_p == glyph->right_box_line_p
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.voffset == glyph->voffset
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.pixel_width == glyph->pixel_width
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.x == glyph->slice.img.x
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.y == glyph->slice.img.y
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.width == glyph->slice.img.width
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.height == glyph->slice.img.height
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.cmp.from == glyph->slice.cmp.from
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].x == x
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].fx == fx
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].y == y
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].fy == fy
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].hpos == hpos
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].vpos == vpos
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].wd == wd
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].h == h
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_type == cursor_type
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_width == cursor_width
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.red == foreground.red
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.green == foreground.green
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.blue == foreground.blue
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.red == background.red
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.green == background.green
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.blue == background.blue
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].active_p == active_p
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph_flavor == glyph_flavor
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].row_position == row_position
+             && w->mc_matrix.vpos[vnth].cache[cache_type][nth].enabled_p == true);
+        }
+      /* In a situation where there are no changes (e.g., C-g), we still need to
+      reset the left/right fringe bitmap indicators. */
+      if (!same_p
+          || cursor_type == MC_LEFT_FRINGE_BITMAP
+          || cursor_type == MC_RIGHT_FRINGE_BITMAP)
+        mc_draw_erase_hybrid (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h, cursor_type,
+                              cursor_width, foreground, active_p, glyph_flavor, remove_p);
+      return;
+    }
+    else if (draw_p
+             && (from_where == SCRIBE_ONE
+                 || from_where == SCRIBE_TWO
+                 || from_where == SCRIBE_THREE
+                 || from_where == NOWHERE))
+      {
+        mc_draw_erase_hybrid (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h, cursor_type,
+                              cursor_width, foreground, active_p, glyph_flavor, remove_p);
+        return;
+      }
+  if (cache_type == NO_CACHE)
+    return;
+  ++w->mc_matrix.cursors_used[cache_type];
+  if (vnth >= w->mc_matrix.vpos_used)
+    w->mc_matrix.vpos_used = vnth + 1;
+  if (w->mc_matrix.vpos_allocated < w->mc_matrix.vpos_used)
+    {
+      int old_alloc = w->mc_matrix.vpos_allocated;
+      int new_elts = w->mc_matrix.vpos_used - w->mc_matrix.vpos_allocated;
+      w->mc_matrix.vpos = xpalloc (w->mc_matrix.vpos, &w->mc_matrix.vpos_allocated,
+                                   new_elts, INT_MAX, sizeof *w->mc_matrix.vpos);
+      memset (w->mc_matrix.vpos + old_alloc, 0,
+               (w->mc_matrix.vpos_allocated - old_alloc) * sizeof *w->mc_matrix.vpos);
+    }
+  ++w->mc_matrix.vpos[vnth].cache_used[cache_type];
+  if (w->mc_matrix.vpos[vnth].cache_allocated[cache_type] < w->mc_matrix.vpos[vnth].cache_used[cache_type])
+    {
+      int old_alloc = w->mc_matrix.vpos[vnth].cache_allocated[cache_type];
+      int new_elts = w->mc_matrix.vpos[vnth].cache_used[cache_type] - w->mc_matrix.vpos[vnth].cache_allocated[cache_type];
+      w->mc_matrix.vpos[vnth].cache[cache_type] = xpalloc (w->mc_matrix.vpos[vnth].cache[cache_type],
+                                                           &w->mc_matrix.vpos[vnth].cache_allocated[cache_type],
+                                                           new_elts,
+                                                           INT_MAX,
+                                                           sizeof *w->mc_matrix.vpos[vnth].cache[cache_type]);
+      memset (w->mc_matrix.vpos[vnth].cache[cache_type] + old_alloc, 0,
+               (w->mc_matrix.vpos[vnth].cache_allocated[cache_type] - old_alloc)
+                 * sizeof *w->mc_matrix.vpos[vnth].cache[cache_type]);
+    }
+  int nth = w->mc_matrix.vpos[vnth].cache_used[cache_type] - 1;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].same_p = false;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.type = glyph->type;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.bytepos = glyph->bytepos;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.charpos = glyph->charpos;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.u.val = glyph->u.val;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.u.ch = glyph->u.ch;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.face_id = glyph->face_id;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.padding_p = glyph->padding_p;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.left_box_line_p = glyph->left_box_line_p;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.right_box_line_p = glyph->right_box_line_p;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.voffset = glyph->voffset;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.pixel_width = glyph->pixel_width;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.x = glyph->slice.img.x;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.y = glyph->slice.img.y;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.width = glyph->slice.img.width;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.img.height = glyph->slice.img.height;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph.slice.cmp.from = glyph->slice.cmp.from;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].x = x;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].fx = fx;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].y = y;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].fy = fy;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].hpos = hpos;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].vpos = vpos;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].wd = wd;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].h = h;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_type = cursor_type;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_width = cursor_width;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.red = foreground.red;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.green = foreground.green;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.blue = foreground.blue;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.red = background.red;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.green = background.green;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.blue = background.blue;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].active_p = active_p;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph_flavor = glyph_flavor;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].row_position = row_position;
+  w->mc_matrix.vpos[vnth].cache[cache_type][nth].enabled_p = true;
+}
+
+/* Return a pointer to the glyph W's physical cursor is on.  Value is null if W's
+   matrix is invalid, so that no meaningful glyph can be returned. */
+struct glyph *
+mc_get_cursor_glyph (struct window *w, struct glyph_matrix *matrix,
+                     struct glyph_row *row, int hpos, int vpos)
+{
+  struct glyph *glyph;
+  if (!(vpos >= 0
+        && vpos < matrix->nrows))
+    return NULL;
+  if (!row->enabled_p)
+    return NULL;
+  if (w->hscroll)
+    {
+      /* When the window is hscrolled, cursor hpos can legitimately be
+      out of bounds, but we draw the cursor at the corresponding
+      window margin in that case. */
+      if (!row->reversed_p && hpos < 0)
+        hpos = 0;
+      if (row->reversed_p && hpos >= row->used[TEXT_AREA])
+        hpos = row->used[TEXT_AREA] - 1;
+    }
+  if (0 <= hpos && hpos < row->used[TEXT_AREA])
+    glyph = row->glyphs[TEXT_AREA] + hpos;
+    else
+      glyph = NULL;
+  return glyph;
+}
+
+/* This function differs substantially from `get_phys_cursor_geometry'.
+   `xterm.c`:  `mc_x_draw_hollow_cursor` calls `x_draw_rectangle', which requires
+   a WD - 1 and H - 1.  So that `mc_get_cursor_geometry` can be used for all
+   platforms, `mc_x_draw_hollow_cursor` subtracts the extra pixel from WD and H.
+   FX:  Frame relative coordinate for window relative X.
+   FY:  Frame relative coordinate of ROW->Y; i.e., top of the line.  For an
+        MC_HBAR, use ROW->Y + ROW->VISIBLE_HEIGHT - 1 pixel so that it
+        is palced at the very bottom of the visible row.
+   WD:  GLYPH->PIXEL_WIDTH, except when dealing with a STRETCH_GLYPH when we take
+        into consideration `x-stretch-cursor' and `cursor_type`.
+   H:  MC_HBAR is 1 pixel, and all others are ROW->VISIBLE_HEIGHT.
+       FIXME:  Add conditions for user-specified thickness of MC_BAR and
+               MC_HBAR as to `mc-real-fake-cursor'.
+   MULTIPLE_CURSORS:  We do not use this function.
+   HORIZONTAL_RULER:  We want a universal FY coordinate for a level ruler.
+   VERTICAL_RULER and FILL_COLUMN:  We want an H that ensures no gap between the
+                                    previous/next line.  The FX coordinate is set
+                                    elsewhere:  `w->cursor.x` / `mc.fc_x`. */
+void
+mc_get_cursor_geometry (struct window *w, struct glyph_matrix *matrix,
+                        struct glyph_row *row, int x, int *fx, int y,
+                        int *fy, int hpos, int vpos, int *h,
+                        enum mc_cursor_type cursor_type, int cursor_width,
+                        int *wd)
+{
+  struct glyph *glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+  if (glyph == NULL)
+    return;
+  struct frame *f = XFRAME (WINDOW_FRAME (w));
+  *fx = WINDOW_TEXT_TO_FRAME_PIXEL_X (w, x);
+  *h = row->visible_height;
+  /* Don't let the cursor exceed the dimensions of the row, so that
+  the upper/lower side of the box aren't clipped.  */
+  int w_header_line_height = WINDOW_HEADER_LINE_HEIGHT (w);
+  int w_text_bottom_y = window_text_bottom_y (w) - *h;
+  if (y < w_header_line_height)
+    {
+      *h = max (*h - (w_header_line_height - y) + 1, *h);
+      y = w_header_line_height - 1;
+      // fprintf (stderr, "CONDITION # 1\n");
+    }
+   else if (y > w_text_bottom_y)
+     {
+       *h += y - w_text_bottom_y;
+       y = w_text_bottom_y;
+       // fprintf (stderr, "CONDITION # 2\n");
+     }
+  *fy = WINDOW_TO_FRAME_PIXEL_Y (w, y);
+  switch (cursor_type)
+    {
+      case MC_BAR:
+        {
+          if (cursor_width < 1)
+            cursor_width = max (FRAME_CURSOR_WIDTH (f), 1);
+          if (cursor_width < glyph->pixel_width)
+          *wd = cursor_width;
+          break;
+        }
+      case MC_HBAR:
+        {
+          int cursor_height = (cursor_width < 1) ? lrint (0.25 * *h) : cursor_width;
+          if (cursor_height > row->height)
+            cursor_height = row->height;
+          /* Cursor smaller than line height, so move down. */
+          if (*h > cursor_height)
+            *fy += *h - cursor_height;
+          *h = cursor_height;
+          *wd = glyph->pixel_width;
+          break;
+        }
+      case MC_RIGHT_FRINGE_BITMAP:
+      case MC_LEFT_FRINGE_BITMAP:
+      case MC_NO_FRINGE_BITMAP:
+      case MC_NO_CURSOR:
+      case MC_FRAMED_BOX:
+      case MC_FILLED_BOX:
+      case MC_HOLLOW_BOX:
+      default:
+      /* Compute the width of the rectangle to draw.  If on a stretch glyph, and
+      `x-stretch-cursor' is nil, don't draw a rectangle as wide as the glyph, but
+      use a canonical character width instead. */
+      *wd = (glyph->type == STRETCH_GLYPH
+             && !x_stretch_cursor_p)
+            ? min (FRAME_COLUMN_WIDTH (f), glyph->pixel_width)
+            : glyph->pixel_width;
+    }
+/*
+      fprintf (stderr, "cursor_width: (%d) | x (%d) | *fx (%d) | y (%d) | *fy (%d), *wd (%d) | *h (%d)\n",
+                       cursor_width, x, *fx, y, *fy, *wd, *h);
+*/
+}
+
+void
+mc_engine (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+           struct glyph *glyph, int area, int relative_x, int x_limit, int y,
+           int hpos, int vpos, enum mc_cursor_type cursor_type, int cursor_width,
+           struct glyph_matrix *cursor_matrix, struct mc_essentials essentials,
+           enum mc_row_position row_position, struct mc_RGB foreground,
+           enum mc_engine_type action_type, bool draw_p,
+           enum mc_draw_row_type from_where, enum mc_cache_type cache_type)
+{
+  int opoint_x = w->cursor.x;
+  int opoint_y = w->cursor.y;
+  int opoint_hpos = w->cursor.hpos;
+  int opoint_vpos = w->cursor.vpos;
+  int fx, fy, h, wd;
+  mc_get_cursor_geometry (w, matrix, row, relative_x, &fx, y, &fy, hpos, vpos,
+                          &h, cursor_type, cursor_width, &wd);
+  int opoint_fx = WINDOW_TEXT_TO_FRAME_PIXEL_X (w, opoint_x);
+  int fc_fx = WINDOW_TEXT_TO_FRAME_PIXEL_X (w, essentials.fc_x);
+  bool glyph_zv_p = (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                     && MATRIX_ROW_END_CHARPOS (row) == ZV);
+  struct frame *f = XFRAME (w->frame);
+  struct buffer *b = XBUFFER (w->contents);
+  int text_area_width = window_box_width (w, TEXT_AREA);
+  struct glyph_row *cursor_row = (w->cursor.vpos != -1)
+                                 ? MATRIX_ROW (cursor_matrix, w->cursor.vpos)
+                                 : NULL;
+  struct glyph *cursor_glyph = (w->cursor.vpos != -1)
+                               ? mc_get_cursor_glyph (w, cursor_matrix, cursor_row,
+                                                      w->cursor.hpos, w->cursor.vpos)
+                               : NULL;
+  bool cursor_at_fringe_p = (cursor_glyph == NULL
+                             && cursor_row != NULL
+                             && w->cursor.hpos == cursor_row->used[TEXT_AREA]
+                             && cursor_row->exact_window_width_line_p
+                             && w->cursor.x == text_area_width
+                             && w->cursor.x == cursor_row->pixel_width);
+  bool cursor_beyond_fringe_p = (cursor_glyph == NULL
+                                 && cursor_row != NULL
+                                 && w->cursor.hpos == cursor_row->used[TEXT_AREA]
+                                 && !cursor_row->exact_window_width_line_p
+                                 && w->cursor.x >= text_area_width
+                                 && w->cursor.x >= cursor_row->pixel_width);
+  int frame_char_width = FRAME_COLUMN_WIDTH (f);
+  int temp_face_id = glyph->face_id;
+  struct mc_RGB background;
+  mc_set_lsl_bg (w, temp_face_id, &background);
+  bool real_fake_cursor_p = (opoint_x == relative_x
+                             && opoint_hpos == hpos
+                             && opoint_y == row->y
+                             && opoint_vpos == vpos);
+
+/* --------------------------------------------------------------------------- */
+/*                       BEGIN:  CHAR_GLYPH | GLYPHLESS_GLYPH                  */
+/* --------------------------------------------------------------------------- */
+  if (glyph->type == CHAR_GLYPH
+      || glyph->type == GLYPHLESS_GLYPH)
+  {
+    if (mc_stderr_p)
+      fprintf (stderr,
+        "\n %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x %4d %1.1d%1.1d  %3d %s %s\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        (glyph->type == CHAR_GLYPH
+         ? 'C'
+         : 'G'),
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+         ? 'B'
+         : (STRINGP (glyph->object)
+            ? 'S'
+            : (NILP (glyph->object)
+               ? '0'
+               : '-'))),
+              glyph->pixel_width,
+        glyph->u.ch,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        mc_char_to_string (glyph->u.ch));
+  switch (action_type)
+  {
+/* --------------------------------------------------------------------------- */
+/*               MULTIPLE_CURSORS:  CHAR_GLYPH | GLYPHLESS_GLYPH               */
+/* --------------------------------------------------------------------------- */
+    case MULTIPLE_CURSORS:
+    {
+      mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*               HORIZONTAL_RULER:  CHAR_GLYPH | GLYPHLESS_GLYPH               */
+/* --------------------------------------------------------------------------- */
+    case HORIZONTAL_RULER:
+    {
+      if (relative_x < row->pixel_width
+          && !real_fake_cursor_p)
+        mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                   wd, h, cursor_type, cursor_width, row_position, foreground,
+                   background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                   cache_type, action_type);
+      if (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+          && relative_x <= x_limit)
+        {
+          if (relative_x < row->pixel_width)
+            {
+              relative_x += glyph->pixel_width;
+              fx += glyph->pixel_width;
+            }
+          mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                     x_limit - relative_x, h, cursor_type, cursor_width, row_position,
+                     foreground, background, essentials.active_p, MC_GLYPHLESS,
+                     draw_p, from_where, cache_type, action_type);
+        }
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*               VERTICAL_RULER:  CHAR_GLYPH | GLYPHLESS_GLYPH                 */
+/* --------------------------------------------------------------------------- */
+    case VERTICAL_RULER:
+    {
+      enum mc_flavor glyph_flavor = (cursor_at_fringe_p
+                                     && row->continued_p)
+                                      ? MC_VERTICAL_BAR_BACKSLASH
+                                    : (cursor_at_fringe_p
+                                       && !row->continued_p
+                                       && !row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR
+                                    : (cursor_at_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && cursor_row->used[TEXT_AREA] != 1
+                                       && !row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR
+                                    : (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                                       && opoint_x >= row->pixel_width)
+                                      ? MC_GLYPHLESS
+                                    : (glyph_zv_p)
+                                      ? MC_GLYPHLESS
+                                    : MC_GLYPH;
+      if (glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_VERTICAL_BAR_BACKSLASH
+          || glyph_flavor == MC_VERTICAL_BAR
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR)
+        cursor_type = MC_RIGHT_FRINGE_BITMAP;
+      wd = 1;
+      mc_helper (w, matrix, row, glyph, relative_x, opoint_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*               FILL_COLUMN:  CHAR_GLYPH | GLYPHLESS_GLYPH                 */
+/* --------------------------------------------------------------------------- */
+    case FILL_COLUMN:
+    {
+      enum mc_flavor glyph_flavor = (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                                     && essentials.fc_x >= row->pixel_width)
+                                      ? MC_GLYPHLESS
+                                    : (glyph_zv_p)
+                                      ? MC_GLYPHLESS
+                                    : (!NILP (BVAR (b, crosshairs))
+                                       && !NILP (BVAR (XBUFFER (w->contents), ch_vertical_ruler))
+                                       && opoint_y == y
+                                       && opoint_vpos == vpos)
+                                      ? MC_GLYPHLESS
+                                    : MC_GLYPH;
+      wd = 1;
+      mc_helper (w, matrix, row, glyph, relative_x, fc_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+    case CURSOR_INDICATOR:
+    {
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+  }
+  }
+/* --------------------------------------------------------------------------- */
+/*                        END:  CHAR_GLYPH | GLYPHLESS_GLYPH                   */
+/* --------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------- */
+/*                             BEGIN:  STRETCH_GLYPH                           */
+/* --------------------------------------------------------------------------- */
+  else if (glyph->type == STRETCH_GLYPH)
+  {
+    if (mc_stderr_p)
+      fprintf (stderr,
+        "\n %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x %4d %1.1d%1.1d  %3d %s %s\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        'S',
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+         ? 'B'
+         : (STRINGP (glyph->object)
+            ? 'S'
+            : (NILP (glyph->object)
+               ? '0'
+               : '-'))),
+        glyph->pixel_width,
+        0u,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        "\\S");
+  switch (action_type)
+  {
+/* --------------------------------------------------------------------------- */
+/*                        MULTIPLE_CURSORS:  STRETCH_GLYPH                     */
+/* --------------------------------------------------------------------------- */
+    case MULTIPLE_CURSORS:
+    {
+      mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                        HORIZONTAL_RULER:  STRETCH_GLYPH                     */
+/* --------------------------------------------------------------------------- */
+    case HORIZONTAL_RULER:
+    {
+      if (relative_x < row->pixel_width
+          && !real_fake_cursor_p)
+        mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                   wd, h, cursor_type, cursor_width, row_position, foreground,
+                   background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                   cache_type, action_type);
+      if (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+          && relative_x <= x_limit)
+        {
+          if (relative_x < row->pixel_width)
+            {
+              relative_x += glyph->pixel_width;
+              fx += glyph->pixel_width;
+            }
+          temp_face_id = (row->fill_line_p)
+                         ? glyph->face_id
+                         : DEFAULT_FACE_ID;
+          struct mc_RGB background;
+          mc_set_lsl_bg (w, temp_face_id, &background);
+          mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                     x_limit - relative_x, h, cursor_type, x_limit - relative_x,
+                     row_position, foreground, background, essentials.active_p,
+                     MC_GLYPHLESS, draw_p, from_where, cache_type, action_type);
+        }
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                          VERTICAL_RULER:  STRETCH_GLYPH                     */
+/* --------------------------------------------------------------------------- */
+    case VERTICAL_RULER:
+    {
+      if (row->fill_line_p
+          && glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+          && opoint_x > relative_x + glyph->pixel_width)
+        temp_face_id = glyph->face_id;
+        else if (!row->fill_line_p
+                 && glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                 && opoint_x > relative_x + glyph->pixel_width)
+          temp_face_id = DEFAULT_FACE_ID;
+      struct mc_RGB background;
+      mc_set_lsl_bg (w, temp_face_id, &background);
+      enum mc_flavor glyph_flavor = (cursor_at_fringe_p
+                                     && row->continued_p)
+                                      ? MC_VERTICAL_BAR_BACKSLASH
+                                    : (cursor_at_fringe_p
+                                       && !row->continued_p
+                                       && !row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR
+                                    : (cursor_at_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && cursor_row->used[TEXT_AREA] != 1
+                                       && !row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR
+                                    : MC_GLYPHLESS;
+      if (glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_VERTICAL_BAR_BACKSLASH
+          || glyph_flavor == MC_VERTICAL_BAR
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR)
+        cursor_type = MC_RIGHT_FRINGE_BITMAP;
+      wd = 1;
+      mc_helper (w, matrix, row, glyph, opoint_x, opoint_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                           FILL_COLUMN:  STRETCH_GLYPH                       */
+/* --------------------------------------------------------------------------- */
+    case FILL_COLUMN:
+    {
+      if (row->fill_line_p
+          && glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+          && essentials.fc_x > relative_x + glyph->pixel_width)
+        temp_face_id = glyph->face_id;
+        else if (!row->fill_line_p
+                 && glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                 && essentials.fc_x > relative_x + glyph->pixel_width)
+          temp_face_id = DEFAULT_FACE_ID;
+      struct mc_RGB background;
+      mc_set_lsl_bg (w, temp_face_id, &background);
+      enum mc_flavor glyph_flavor = MC_GLYPHLESS;
+      wd = 1;
+      mc_helper (w, matrix, row, glyph, essentials.fc_x, fc_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+    case CURSOR_INDICATOR:
+    {
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+  }
+  }
+/* --------------------------------------------------------------------------- */
+/*                               END:  STRETCH_GLYPH                           */
+/* --------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------- */
+/*                              BEGIN:  IMAGE_GLYPH                            */
+/* --------------------------------------------------------------------------- */
+  else if (glyph->type == IMAGE_GLYPH)
+  {
+    if (mc_stderr_p)
+      fprintf (stderr,
+        "\n %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x %4d %1.1d%1.1d  %3d %s %c\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        'I',
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+         ? 'B'
+         : (STRINGP (glyph->object)
+            ? 'S'
+            : (NILP (glyph->object)
+               ? '0'
+               : '-'))),
+        glyph->pixel_width,
+        (unsigned int) glyph->u.img_id,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        '.');
+  switch (action_type)
+  {
+/* --------------------------------------------------------------------------- */
+/*                         MULTIPLE_CURSORS:  IMAGE_GLYPH                      */
+/* --------------------------------------------------------------------------- */
+    case MULTIPLE_CURSORS:
+    {
+      cursor_type = MC_HOLLOW_BOX;
+      mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                         HORIZONTAL_RULER:  IMAGE_GLYPH                      */
+/* --------------------------------------------------------------------------- */
+    case HORIZONTAL_RULER:
+    {
+      cursor_type = MC_HOLLOW_BOX;
+      if (!real_fake_cursor_p)
+        mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                   wd, h, cursor_type, cursor_width, row_position, foreground,
+                   background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                   cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                           VERTICAL_RULER:  IMAGE_GLYPH                      */
+/* --------------------------------------------------------------------------- */
+    case VERTICAL_RULER:
+    {
+      cursor_type = MC_HOLLOW_BOX;
+      mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                            FILL_COLUMN:  IMAGE_GLYPH                        */
+/* --------------------------------------------------------------------------- */
+    case FILL_COLUMN:
+    {
+      cursor_type = MC_HOLLOW_BOX;
+      mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+    case CURSOR_INDICATOR:
+    {
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+  }
+  }
+/* --------------------------------------------------------------------------- */
+/*                                END:  IMAGE_GLYPH                            */
+/* --------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------- */
+/*                            BEGIN:  COMPOSITE_GLYPH                          */
+/* --------------------------------------------------------------------------- */
+  else if (glyph->type == COMPOSITE_GLYPH)
+  {
+    if (mc_stderr_p)
+      {
+        fprintf (stderr,
+          "\n %5"pD"d/%-5d %5d %c %9"pD"d %c %3d 0x%06x",
+          glyph - row->glyphs[TEXT_AREA],
+          ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+          relative_x,
+          '+',
+          glyph->charpos,
+          (BUFFERP (glyph->object)
+           ? 'B'
+           : (STRINGP (glyph->object)
+              ? 'S'
+              : (NILP (glyph->object)
+                 ? '0'
+                 : '-'))),
+          glyph->pixel_width,
+          (unsigned int) glyph->u.cmp.id);
+        fprintf (stderr, " %4d %1.1d%1.1d",
+          glyph->face_id,
+          glyph->left_box_line_p,
+          glyph->right_box_line_p);
+      if (glyph->u.cmp.automatic)
+        fprintf (stderr, "  %3d %s . [%d-%d]\n",
+                         glyph->hpos, glyph_zv_p ? "ZV" : "--",
+                         glyph->slice.cmp.from, glyph->slice.cmp.to);
+        else
+          fprintf (stderr, "\n");
+      }
+  switch (action_type)
+  {
+/* --------------------------------------------------------------------------- */
+/*                       MULTIPLE_CURSORS:  COMPOSITE_GLYPH                    */
+/* --------------------------------------------------------------------------- */
+    case MULTIPLE_CURSORS:
+    {
+      mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                       HORIZONTAL_RULER:  COMPOSITE_GLYPH                    */
+/* --------------------------------------------------------------------------- */
+    case HORIZONTAL_RULER:
+    {
+      if (relative_x <= x_limit
+          && !real_fake_cursor_p)
+        mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                   wd, h, cursor_type, cursor_width, row_position, foreground,
+                   background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                   cache_type, action_type);
+      if (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+          && relative_x <= x_limit)
+        {
+          relative_x += glyph->pixel_width;
+          while (relative_x <= x_limit)
+            {
+              mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                         wd, h, cursor_type, cursor_width, row_position, foreground,
+                         background, essentials.active_p, MC_GLYPHLESS, draw_p,
+                         from_where, cache_type, action_type);
+              relative_x += frame_char_width;
+            }
+        }
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                         VERTICAL_RULER:  COMPOSITE_GLYPH                    */
+/* --------------------------------------------------------------------------- */
+    case VERTICAL_RULER:
+    {
+      enum mc_flavor glyph_flavor = (cursor_at_fringe_p
+                                     && row->continued_p)
+                                      ? MC_VERTICAL_BAR_BACKSLASH
+                                    : (cursor_at_fringe_p
+                                       && !row->continued_p
+                                       && !row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR
+                                    : (cursor_at_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && cursor_row->used[TEXT_AREA] != 1
+                                       && !row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR
+                                    : (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                                       && opoint_x >= row->pixel_width)
+                                      ? MC_GLYPHLESS
+                                    : (glyph_zv_p)
+                                      ? MC_GLYPHLESS
+                                    : MC_GLYPH;
+      if (glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_VERTICAL_BAR_BACKSLASH
+          || glyph_flavor == MC_VERTICAL_BAR
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR)
+        cursor_type = MC_RIGHT_FRINGE_BITMAP;
+      wd = 1;
+      mc_helper (w, matrix, row, glyph, relative_x, opoint_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                          FILL_COLUMN:  COMPOSITE_GLYPH                      */
+/* --------------------------------------------------------------------------- */
+    case FILL_COLUMN:
+    {
+      enum mc_flavor glyph_flavor = (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                                     && essentials.fc_x > relative_x)
+                                      ? MC_GLYPHLESS
+                                    : (glyph_zv_p)
+                                      ? MC_GLYPHLESS
+                                    : (!NILP (BVAR (b, crosshairs))
+                                       && !NILP (BVAR (XBUFFER (w->contents), ch_vertical_ruler))
+                                       && opoint_y == y
+                                       && opoint_vpos == vpos)
+                                      ? MC_GLYPHLESS
+                                    : MC_GLYPH;
+      wd = 1;
+      mc_helper (w, matrix, row, glyph, relative_x, fc_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+    case CURSOR_INDICATOR:
+    {
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+  }
+  }
+/* --------------------------------------------------------------------------- */
+/*                              END:  COMPOSITE_GLYPH                          */
+/* --------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------- */
+/*                             BEGIN:  XWIDGET_GLYPH                           */
+/* --------------------------------------------------------------------------- */
+  else if (glyph->type == XWIDGET_GLYPH)
+  {
+#ifndef HAVE_XWIDGETS
+    eassume (false);
+#else
+    if (mc_stderr_p)
+      fprintf (stderr,
+        "\n  %5d/%-5d %5d %4c %6d %c %3d 0x%05x %4d %1.1d%1.1d  %3d %s %c\n",
+        glyph - row->glyphs[TEXT_AREA],
+        ((row->used[area] == 0) ? 0 : row->used[area] - 1),
+        relative_x,
+        'X',
+        glyph->charpos,
+        (BUFFERP (glyph->object)
+         ? 'B'
+         : (STRINGP (glyph->object)
+            ? 'S'
+            : '-')),
+        glyph->pixel_width,
+        glyph->face_id,
+        glyph->left_box_line_p,
+        glyph->right_box_line_p,
+        glyph->u.xwidget,
+        glyph->hpos, glyph_zv_p ? "ZV" : "--",
+        '.');
+#endif
+  switch (action_type)
+  {
+/* --------------------------------------------------------------------------- */
+/*                        MULTIPLE_CURSORS:  XWIDGET_GLYPH                     */
+/* --------------------------------------------------------------------------- */
+    case MULTIPLE_CURSORS:
+    {
+      mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                        HORIZONTAL_RULER:  XWIDGET_GLYPH                     */
+/* --------------------------------------------------------------------------- */
+    case HORIZONTAL_RULER:
+    {
+      if (relative_x <= x_limit
+          && !real_fake_cursor_p)
+        mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                   wd, h, cursor_type, cursor_width, row_position, foreground,
+                   background, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                   cache_type, action_type);
+      if (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+          && relative_x <= x_limit)
+        {
+          relative_x += glyph->pixel_width;
+          while (relative_x <= x_limit)
+            {
+              mc_helper (w, matrix, row, glyph, relative_x, fx, y, fy, hpos, vpos,
+                         wd, h, cursor_type, cursor_width, row_position, foreground,
+                         background, essentials.active_p, MC_GLYPHLESS, draw_p,
+                         from_where, cache_type, action_type);
+              relative_x += frame_char_width;
+            }
+        }
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                          VERTICAL_RULER:  XWIDGET_GLYPH                     */
+/* --------------------------------------------------------------------------- */
+    case VERTICAL_RULER:
+    {
+      enum mc_flavor glyph_flavor = (cursor_at_fringe_p
+                                     && row->continued_p)
+                                      ? MC_VERTICAL_BAR_BACKSLASH
+                                    : (cursor_at_fringe_p
+                                       && !row->continued_p
+                                       && !row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR
+                                    : (cursor_at_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                                    : (cursor_beyond_fringe_p
+                                       && cursor_row->used[TEXT_AREA] != 1
+                                       && !row->truncated_on_right_p)
+                                      ? MC_REVERSED_VERTICAL_BAR
+                                    : (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                                       && opoint_x >= row->pixel_width)
+                                      ? MC_GLYPHLESS
+                                    : (glyph_zv_p)
+                                      ? MC_GLYPHLESS
+                                    : MC_GLYPH;
+      if (glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+          || glyph_flavor == MC_VERTICAL_BAR_BACKSLASH
+          || glyph_flavor == MC_VERTICAL_BAR
+          || glyph_flavor == MC_REVERSED_VERTICAL_BAR)
+        cursor_type = MC_RIGHT_FRINGE_BITMAP;
+      mc_helper (w, matrix, row, glyph, relative_x, opoint_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+/*                           FILL_COLUMN:  XWIDGET_GLYPH                       */
+/* --------------------------------------------------------------------------- */
+    case FILL_COLUMN:
+    {
+      enum mc_flavor glyph_flavor = (glyph - row->glyphs[TEXT_AREA] == row->used[area] - 1
+                                     && essentials.fc_x > relative_x)
+                                      ? MC_GLYPHLESS
+                                    : (glyph_zv_p)
+                                      ? MC_GLYPHLESS
+                                    : (!NILP (BVAR (b, crosshairs))
+                                       && !NILP (BVAR (XBUFFER (w->contents), ch_vertical_ruler))
+                                       && opoint_y == y
+                                       && opoint_vpos == vpos)
+                                      ? MC_GLYPHLESS
+                                    : MC_GLYPH;
+      mc_helper (w, matrix, row, glyph, relative_x, fc_fx, y, fy, hpos, vpos,
+                 wd, h, cursor_type, cursor_width, row_position, foreground,
+                 background, essentials.active_p, glyph_flavor, draw_p, from_where,
+                 cache_type, action_type);
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+    case CURSOR_INDICATOR:
+    {
+      break;
+    }
+/* --------------------------------------------------------------------------- */
+  }
+  }
+/* --------------------------------------------------------------------------- */
+/*                               END:  XWIDGET_GLYPH                           */
+/* --------------------------------------------------------------------------- */
+}
+
+void
+mc_draw_row (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+             struct glyph *start, int x, int hpos_length, int vpos,
+             struct glyph_matrix *cursor_matrix, struct mc_essentials essentials,
+             enum mc_row_position row_position, bool draw_p, enum mc_draw_row_type from_where)
+{
+  //  clock_t clock_start = clock();
+  /* W32 Emacs crashes on startup without a `BUFFERP' check in `update_window'. */
+  if (!BUFFERP (w->contents))
+    return;
+  struct buffer *b = XBUFFER (w->contents);
+  if (NILP (BVAR (b, mc_conf))
+      && NILP (BVAR (b, crosshairs))
+      && NILP (BVAR (b, fc_visible)))
+    return;
+  struct glyph_row *bottom_row = MATRIX_BOTTOM_TEXT_ROW (matrix, w);
+  int bottom_vpos = MATRIX_ROW_VPOS (bottom_row, matrix);
+  if (vpos == bottom_vpos)
+    return;
+  if (!row->used[TEXT_AREA])
+    return;
+  int hpos_start = start - row->glyphs[TEXT_AREA];
+  if (mc_stderr_p)
+    fprintf (stderr, "mc_draw_row (%d):  draw_p (%s) | hpos (%d) | len (%d)\n",
+                     vpos, draw_p ? "y" : "n", hpos_start, hpos_length);
+  int opoint_fx, opoint_fy, opoint_wd, opoint_h;
+  int text_area_width = window_box_width (w, TEXT_AREA);
+  int header_line_format = WINDOW_HEADER_LINE_HEIGHT (w);
+  struct glyph_row *cursor_row = (w->cursor.vpos != -1)
+                                 ? MATRIX_ROW (cursor_matrix, w->cursor.vpos)
+                                 : NULL;
+  struct glyph *cursor_glyph = (w->cursor.vpos != -1)
+                               ? mc_get_cursor_glyph (w, cursor_matrix, cursor_row,
+                                                      w->cursor.hpos, w->cursor.vpos)
+                               : NULL;
+  bool cursor_at_fringe_p = (cursor_glyph == NULL
+                             && cursor_row != NULL
+                             && w->cursor.hpos == cursor_row->used[TEXT_AREA]
+                             && cursor_row->exact_window_width_line_p
+                             && w->cursor.x == text_area_width
+                             && w->cursor.x == cursor_row->pixel_width);
+  bool cursor_beyond_fringe_p = (cursor_glyph == NULL
+                                 && cursor_row != NULL
+                                 && w->cursor.hpos == cursor_row->used[TEXT_AREA]
+                                 && !cursor_row->exact_window_width_line_p
+                                 && w->cursor.x >= text_area_width
+                                 && w->cursor.x >= cursor_row->pixel_width);
+/* ******************************************************************************
+                          REPLACE THE REAL CURSOR
+****************************************************************************** */
+  enum face_id bg_face_id = (cursor_glyph != NULL)
+                            ? cursor_glyph->face_id
+                            : DEFAULT_FACE_ID;
+  struct mc_RGB cursor_bg;
+  mc_set_lsl_bg (w, bg_face_id, &cursor_bg);
+  /* FIXME:  Put in some code to default to MC_HOLLOW_BOX if the user has
+  unwittingly come up with some unacceptable form of unrecognized cursor type. */
+  Lisp_Object lisp_type = BVAR (b, mc_real_fake_cursor);
+  enum mc_cursor_type cursor_type = (CONSP (lisp_type))
+                                    ? mc_lisp_to_cursor_type (XCAR (lisp_type))
+                                    : mc_lisp_to_cursor_type (lisp_type);
+  int cursor_width = (CONSP (lisp_type))
+                     ? XFIXNUM (XCAR (XCDR (lisp_type)))
+                     : -1;
+  struct mc_RGB cursor_fg;
+  mc_color_picker (w, cursor_glyph, essentials, &cursor_fg, -1, cursor_type,
+                   row_position, CURSOR_INDICATOR);
+  bool fill_column_trumps_p = (!NILP (BVAR (b, ch_vertical_ruler))
+                               && !NILP (BVAR (b, fc_visible))
+                               && w->cursor.x == essentials.fc_x
+                               && !cursor_at_fringe_p
+                               && !cursor_beyond_fringe_p);
+  /* We use a test similar to the real fake cursor so that the fringe bitmap is
+  only drawn once per window. */
+  if (vpos == w->cursor.vpos
+      && hpos_start + hpos_length == row->used[TEXT_AREA]
+      && !NILP (BVAR (b, crosshairs))
+      && !NILP (BVAR (b, ch_horizontal_ruler)))
+    {
+      /* fringe bitmaps use face_id to set the foreground color.  The overlay-arrow
+      is presently the only situation where the `essentials.active_p` and `minimal_p` are
+      used to determine the applicable face_id. */
+      struct mc_RGB lsl_fg = {.red = -1.0,
+                              .green = -1.0,
+                              .blue = -1.0};
+      /* We use the first glyph in the row, with an X and HPOS of zero. */
+      mc_helper (w, matrix, row, row->glyphs[TEXT_AREA], 0, -1, w->cursor.y, -1,
+                 0, w->cursor.vpos, -1, -1, MC_LEFT_FRINGE_BITMAP, -1, row_position,
+                 lsl_fg, cursor_bg, essentials.active_p, MC_OVERLAY_ARROW_BITMAP,
+                 draw_p, from_where, CH_CACHE, CURSOR_INDICATOR);
+    }
+  if (cursor_at_fringe_p
+      && vpos == w->cursor.vpos
+      && w->cursor.hpos >= hpos_start
+      && w->cursor.hpos == hpos_start + hpos_length
+      && !NILP (BVAR (b, crosshairs))
+      && !NILP (BVAR (b, ch_horizontal_ruler)))
+    {
+      enum mc_flavor glyph_flavor = MC_HOLLOW_RECTANGLE;
+      struct glyph *glyph = row->glyphs[TEXT_AREA];
+      struct glyph *glyph_end = glyph + row->used[TEXT_AREA];
+      /* Glyph for a line end in text. */
+      if (glyph == glyph_end && glyph->charpos > 0)
+        ++glyph_end;
+      mc_helper (w, matrix, row, glyph_end - 1, w->cursor.x, -1, w->cursor.y, -1,
+                 w->cursor.hpos, w->cursor.vpos, -1, -1, MC_RIGHT_FRINGE_BITMAP,
+                 -1, row_position, cursor_fg, cursor_bg, essentials.active_p,
+                 glyph_flavor, draw_p, from_where, CH_CACHE, CURSOR_INDICATOR);
+    }
+  /* Cursor is beyond the right fringe; e.g., when right horizontal scrolling. */
+  else if (cursor_beyond_fringe_p
+           && vpos == w->cursor.vpos
+           && w->cursor.hpos >= hpos_start
+           && (hpos_start + hpos_length) == row->used[TEXT_AREA]
+           && !NILP (BVAR (b, crosshairs))
+           && !NILP (BVAR (b, ch_horizontal_ruler)))
+    {
+      enum mc_flavor glyph_flavor = MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW;
+      struct glyph *glyph = row->glyphs[TEXT_AREA];
+      struct glyph *glyph_end = glyph + row->used[TEXT_AREA];
+      /* Glyph for a line end in text. */
+      if (glyph == glyph_end && glyph->charpos > 0)
+        ++glyph_end;
+      mc_helper (w, matrix, row, glyph_end - 1, row->pixel_width, -1, w->cursor.y,
+                 -1, row->used[TEXT_AREA] - 1, w->cursor.vpos, -1, -1,
+                 MC_RIGHT_FRINGE_BITMAP, -1, row_position, cursor_fg, cursor_bg,
+                 essentials.active_p, glyph_flavor, draw_p, from_where, CH_CACHE,
+                 CURSOR_INDICATOR);
+    }
+  /* EXAMPLE (buffer-local):  (setq mc-real-fake-cursor nil/'no/"no") */
+  else if (!cursor_at_fringe_p
+           && cursor_glyph != NULL
+           && cursor_type == MC_NO_CURSOR
+           && vpos == w->cursor.vpos
+           && w->cursor.hpos >= hpos_start
+           && w->cursor.hpos < hpos_start + hpos_length)
+    {
+      /* When a user has not specified a value for `mc-real-fake-cursor', or the
+      value is `no` in the form of a symbol or string, then the default we use
+      an MC_BAR and an MC_HBAR -- both having a cursor_width of 1. */
+      mc_get_cursor_geometry (w, matrix, row, w->cursor.x, &opoint_fx, w->cursor.y,
+                              &opoint_fy, w->cursor.hpos, w->cursor.vpos, &opoint_h,
+                              MC_BAR, 1, &opoint_wd);
+      mc_helper (w, matrix, row, cursor_glyph, w->cursor.x, opoint_fx, w->cursor.y,
+                 opoint_fy, w->cursor.hpos, w->cursor.vpos, opoint_wd, opoint_h,
+                 MC_BAR, 1, row_position, cursor_fg, cursor_bg, essentials.active_p,
+                 MC_GLYPHLESS, draw_p, from_where, NILP (BVAR (b, mc_conf))
+                                                   ? CH_CACHE
+                                                   : MC_CACHE, CURSOR_INDICATOR);
+      mc_get_cursor_geometry (w, matrix, row, w->cursor.x, &opoint_fx, w->cursor.y,
+                              &opoint_fy, w->cursor.hpos, w->cursor.vpos, &opoint_h,
+                              MC_HBAR, 1, &opoint_wd);
+      mc_helper (w, matrix, row, cursor_glyph, w->cursor.x, opoint_fx, w->cursor.y,
+                 opoint_fy, w->cursor.hpos, w->cursor.vpos, opoint_wd, opoint_h,
+                 MC_HBAR, 1, row_position, cursor_fg, cursor_bg, essentials.active_p,
+                 MC_GLYPH, draw_p, from_where, NILP (BVAR (b, mc_conf))
+                                               ? CH_CACHE
+                                               : MC_CACHE, CURSOR_INDICATOR);
+    }
+  else if (!cursor_at_fringe_p
+           && cursor_glyph != NULL
+           && vpos == w->cursor.vpos
+           && w->cursor.hpos >= hpos_start
+           && w->cursor.hpos < hpos_start + hpos_length
+           && cursor_glyph->type != STRETCH_GLYPH)
+    {
+      mc_get_cursor_geometry (w, matrix, row, w->cursor.x, &opoint_fx, w->cursor.y,
+                              &opoint_fy, w->cursor.hpos, w->cursor.vpos, &opoint_h,
+                              cursor_type, cursor_width, &opoint_wd);
+      mc_helper (w, matrix, row, cursor_glyph, w->cursor.x, opoint_fx, w->cursor.y,
+                 opoint_fy, w->cursor.hpos, w->cursor.vpos, opoint_wd, opoint_h,
+                 cursor_type, cursor_width, row_position, cursor_fg, cursor_bg,
+                 essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 NILP (BVAR (b, mc_conf))
+                 ? CH_CACHE
+                 : MC_CACHE, CURSOR_INDICATOR);
+    }
+  else if (!cursor_at_fringe_p
+           && cursor_glyph != NULL
+           && vpos == w->cursor.vpos
+           && w->cursor.hpos >= hpos_start
+           && w->cursor.hpos < hpos_start + hpos_length
+           && cursor_glyph->type == STRETCH_GLYPH)
+    {
+      /* If a user has set `x-stretch-cursor' to a non-nil value, he/she chose to
+      have a cursor that spans the entire length of the STRETCH_GLYPH. */
+      if (!x_stretch_cursor_p)
+        {
+          /* The MC_HBAR shall have a `cursor_width` of 1. */
+          mc_get_cursor_geometry (w, matrix, row, w->cursor.x, &opoint_fx,
+                                  w->cursor.y, &opoint_fy, w->cursor.hpos,
+                                  w->cursor.vpos, &opoint_h, MC_HBAR, 1,
+                                  &opoint_wd);
+          mc_helper (w, matrix, row, cursor_glyph, w->cursor.x, opoint_fx,
+                     w->cursor.y, opoint_fy, w->cursor.hpos, w->cursor.vpos,
+                     opoint_wd, opoint_h, MC_HBAR, 1, row_position, cursor_fg,
+                     cursor_bg, essentials.active_p, MC_GLYPH, draw_p, from_where,
+                     NILP (BVAR (b, mc_conf))
+                     ? CH_CACHE
+                     : MC_CACHE, CURSOR_INDICATOR);
+        }
+      mc_get_cursor_geometry (w, matrix, row, w->cursor.x, &opoint_fx,
+                              w->cursor.y, &opoint_fy, w->cursor.hpos,
+                              w->cursor.vpos, &opoint_h, cursor_type,
+                              cursor_width, &opoint_wd);
+      mc_helper (w, matrix, row, cursor_glyph, w->cursor.x, opoint_fx, w->cursor.y,
+                 opoint_fy, w->cursor.hpos, w->cursor.vpos, opoint_wd, opoint_h,
+                 cursor_type, cursor_width, row_position, cursor_fg, cursor_bg,
+                 essentials.active_p, MC_GLYPH, draw_p, from_where,
+                 NILP (BVAR (b, mc_conf))
+                 ? CH_CACHE
+                 : MC_CACHE, CURSOR_INDICATOR);
+    }
+/* ******************************************************************************
+                          DRAW AND RECORD FAKE CURSORS
+****************************************************************************** */
+  if (!essentials.active_p
+      && NILP (BVAR (b, mc_inactive_windows))
+      && NILP (BVAR (b, ch_inactive_windows))
+      && NILP (BVAR (b, fc_inactive_windows)))
+    return;
+  if (hpos_length == 1)
+    {
+      if (!NILP (BVAR (b, mc_conf))
+          && (essentials.active_p
+              || (!essentials.active_p
+                  && !NILP (BVAR (b, mc_inactive_windows)))))
+        {
+          /* The space appended to a row ending with a new line
+          does not have a `glyph->charpos` (-1, 0) that we can
+          use for this particular application.  When there is a
+          `buffer-display-table' entry that assigns a visible
+          glyph to a new line, there is no problem because that
+          glyph has a `glyph->charpos' that we can use.  When
+          no visible EOL glyph exists, we use the following
+          test:  the appended space has a position that is one
+          less than the end of the matrix row. */
+          int hpos = start - row->glyphs[TEXT_AREA];
+          struct glyph *previous_glyph = (0 <= hpos - 1 && hpos - 1 < row->used[TEXT_AREA])
+                                         ? row->glyphs[TEXT_AREA] + hpos - 1
+                                         : NULL;
+          // struct glyph *last_glyph = row->glyphs[TEXT_AREA] + row->used[TEXT_AREA] - 1;
+          bool skip_p = (previous_glyph != NULL
+                         && previous_glyph->charpos == MATRIX_ROW_END_CHARPOS (row) - 1
+                         && start->bytepos != essentials.zv_byte)
+                          ? true
+                        /* When a `buffer-display-table' entry contains
+                        a visible tab character ("»"), the subsequent
+                        STRETCH_GLYPH will have the same start->charpos
+                        as the aforementioned visible tab character. */
+                        : (previous_glyph != NULL
+                           && previous_glyph->charpos == start->charpos)
+                          ? true
+                        : false;
+          int posint = (row_position == POST_ZV)
+                         ? -1
+                       : (row_position == AT_ZV)
+                          ? essentials.zv
+                       : (start->bytepos != essentials.zv_byte
+                          && start - row->glyphs[TEXT_AREA] == row->used[TEXT_AREA] - 1)
+                         ? MATRIX_ROW_END_CHARPOS (row) - 1
+                       : (start->bytepos == essentials.zv_byte
+                          && start - row->glyphs[TEXT_AREA] == row->used[TEXT_AREA] - 1)
+                         ? essentials.zv
+                       : start->charpos;
+          Lisp_Object specs = mc_assoc (make_fixnum (posint), BVAR (b, mc_conf));
+          if (((header_line_format > 0 && vpos > 0)
+               || header_line_format == 0)
+              && !NILP (specs)
+              && row->y <= window_text_bottom_y (w)
+              && !skip_p
+              && row_position != POST_ZV)
+            {
+              Lisp_Object lisp_type = mc_nth (1, specs);
+              enum mc_cursor_type cursor_type = (CONSP (lisp_type))
+                                                ? mc_lisp_to_cursor_type (XCAR (lisp_type))
+                                                : mc_lisp_to_cursor_type (lisp_type);
+              cursor_type = (start->type == IMAGE_GLYPH)
+                            ? MC_HOLLOW_BOX
+                            : cursor_type;
+              int cursor_width = (CONSP (lisp_type))
+                                 ? XFIXNUM (XCAR (XCDR (lisp_type)))
+                                 : -1;
+              Lisp_Object mc_foreground = mc_nth (2, specs);
+              struct mc_RGB lsl_fg;
+              if (STRINGP (mc_foreground))
+                mc_xw_color_values (w, mc_foreground, &lsl_fg);
+                else if (VECTORP (mc_foreground))
+                  {
+                    lsl_fg.red = XFLOAT_DATA (AREF (mc_foreground, 0));
+                    lsl_fg.green = XFLOAT_DATA (AREF (mc_foreground, 1));
+                    lsl_fg.blue = XFLOAT_DATA (AREF (mc_foreground, 2));
+                  }
+                  else if (NILP (mc_foreground))
+                    mc_color_picker (w, start, essentials, &lsl_fg, posint,
+                                     cursor_type, row_position, MULTIPLE_CURSORS);
+              int vpos = MATRIX_ROW_VPOS (row, matrix);
+              int x_limit = text_area_width;
+              mc_engine (w, matrix, row, start, TEXT_AREA, x, x_limit, row->y,
+                         start - row->glyphs[TEXT_AREA], vpos, cursor_type,
+                         cursor_width, cursor_matrix, essentials, row_position,
+                         lsl_fg, MULTIPLE_CURSORS, draw_p, from_where, MC_CACHE);
+            }
+        }
+      if (!NILP (BVAR (b, fc_visible))
+          && (essentials.active_p
+              || (!essentials.active_p
+                  && !NILP (BVAR (b, fc_inactive_windows))))
+          // && essentials.fc_x <= text_area_width
+          && essentials.fc_x < text_area_width
+          && essentials.fc_x >= w->mc.lnum_pixel_width)
+        {
+          int x_limit = x + start->pixel_width;
+          bool real_fake_cursor_p = (w->cursor.x == essentials.fc_x
+                                     && w->cursor.y == row->y
+                                     && w->cursor.hpos == start - row->glyphs[TEXT_AREA]
+                                     && w->cursor.vpos == vpos);
+          struct mc_RGB lsl_fg;
+          mc_color_picker (w, start, essentials, &lsl_fg, -1, MC_BAR,
+                           row_position, FILL_COLUMN);
+          if (x < text_area_width
+              // x + start->pixel_width <= text_area_width
+              && ((header_line_format > 0 && vpos > 0)
+                  || header_line_format == 0)
+              && ((start != row->glyphs[TEXT_AREA] + row->used[TEXT_AREA] - 1
+                   && essentials.fc_x >= x
+                   && essentials.fc_x < x + start->pixel_width)
+                  || (start == row->glyphs[TEXT_AREA] + row->used[TEXT_AREA] - 1
+                      && essentials.fc_x >= x))
+              && row->y <= window_text_bottom_y (w)
+              && !real_fake_cursor_p)
+            mc_engine (w, matrix, row, start, TEXT_AREA, x, x_limit, row->y,
+                       start - row->glyphs[TEXT_AREA], vpos, MC_BAR, 1,
+                       cursor_matrix, essentials, row_position, lsl_fg,
+                       FILL_COLUMN, draw_p, from_where, FC_CACHE);
+        }
+      if (!NILP (BVAR (b, crosshairs))
+          && !NILP (BVAR (b, ch_horizontal_ruler))
+          && (essentials.active_p
+              || (!essentials.active_p
+                  && !NILP (BVAR (b, ch_inactive_windows))))
+          && vpos == w->cursor.vpos)
+        {
+          int x_limit = (start == row->glyphs[TEXT_AREA] + row->used[TEXT_AREA] - 1)
+                        ? text_area_width
+                        : x + start->pixel_width;
+          struct mc_RGB lsl_fg;
+          mc_color_picker (w, start, essentials, &lsl_fg, -1, MC_HBAR,
+                           row_position, HORIZONTAL_RULER);
+          /* Preserve support for default behavior such that a user may
+          specify the height of an MC_HBAR, which begins its journey
+          as the `cursor_width'.  `mc_get_cursor_geometry' readjusts. */
+          mc_engine (w, matrix, row, start, TEXT_AREA, x, x_limit, row->y,
+                     start - row->glyphs[TEXT_AREA], vpos, MC_HBAR, 1,
+                     cursor_matrix, essentials, row_position, lsl_fg,
+                     HORIZONTAL_RULER, draw_p, from_where, CH_CACHE);
+        }
+      if (!NILP (BVAR (b, crosshairs))
+          && !NILP (BVAR (b, ch_vertical_ruler))
+          && (essentials.active_p
+              || (!essentials.active_p
+                  && !NILP (BVAR (b, ch_inactive_windows))))
+          && !fill_column_trumps_p)
+        {
+          cursor_type = (start->type == IMAGE_GLYPH)
+                        ? MC_HOLLOW_BOX
+                        : MC_BAR;
+          int x_limit = text_area_width;
+          bool real_fake_cursor_p = (w->cursor.y == row->y
+                                     && w->cursor.vpos == vpos);
+          struct mc_RGB lsl_fg;
+          mc_color_picker (w, start, essentials, &lsl_fg, -1, cursor_type,
+                           row_position, VERTICAL_RULER);
+          if (((header_line_format > 0 && vpos > 0)
+               || header_line_format == 0)
+              && ((start != row->glyphs[TEXT_AREA] + row->used[TEXT_AREA] - 1
+                   && w->cursor.x >= x
+                   && w->cursor.x < x + start->pixel_width)
+                  || (start == row->glyphs[TEXT_AREA] + row->used[TEXT_AREA] - 1
+                      && w->cursor.x >= x))
+              && row->y <= window_text_bottom_y (w)
+              && !real_fake_cursor_p)
+            mc_engine (w, matrix, row, start, TEXT_AREA, x, x_limit, row->y,
+                       start - row->glyphs[TEXT_AREA], vpos, cursor_type, 1,
+                       cursor_matrix, essentials, row_position, lsl_fg,
+                       VERTICAL_RULER, draw_p, from_where, CH_CACHE);
+        }
+    }
+    else
+      {
+        int relative_x = 0;
+        for (int area = LEFT_MARGIN_AREA; area < LAST_AREA; ++area)
+          {
+            struct glyph *glyph = row->glyphs[area];
+            struct glyph *glyph_end = glyph + row->used[area];
+            /* Glyph for a line end in text. */
+            if (area == TEXT_AREA && glyph == glyph_end && glyph->charpos > 0)
+              ++glyph_end;
+            for (; glyph < glyph_end; ++glyph)
+              {
+                if (vpos != w->cursor.vpos
+                    && glyph != glyph_end - 1
+                    && essentials.fc_x < relative_x
+                    && w->cursor.x < relative_x
+                    && NILP (BVAR (b, mc_conf)))
+                  break;
+                if (!NILP (BVAR (b, mc_conf))
+                    && (essentials.active_p
+                        || (!essentials.active_p
+                            && !NILP (BVAR (b, mc_inactive_windows)))))
+                  {
+                    /* The space appended to a row ending with a new line does
+                    not have a `glyph->charpos` (-1, 0) that we can use for this
+                    particular application.  When a `buffer-display-table' entry
+                    assigns a visible glyph to a new line, there is no problem
+                    because that glyph has a `glyph->charpos' that we can use.
+                    When no visible EOL glyph exists, we use the following test:
+                    the appended space has a position that is one less than the
+                    end of the matrix row. */
+                    int hpos = glyph - row->glyphs[TEXT_AREA];
+                    struct glyph *previous_glyph = (0 <= hpos - 1 && hpos - 1 < row->used[TEXT_AREA])
+                                                   ? row->glyphs[TEXT_AREA] + hpos - 1
+                                                   : NULL;
+                    // struct glyph *last_glyph = row->glyphs[TEXT_AREA] + row->used[TEXT_AREA] - 1;
+                    bool skip_p = (previous_glyph != NULL
+                                   && previous_glyph->charpos == MATRIX_ROW_END_CHARPOS (row) - 1
+                                   && glyph->bytepos != essentials.zv_byte)
+                                    ? true
+                                  /* When a `buffer-display-table' entry contains
+                                  a visible tab character ("»"), the subsequent
+                                  STRETCH_GLYPH will have the same glyph->charpos
+                                  as the aforementioned visible tab character. */
+                                  : (previous_glyph != NULL
+                                     && previous_glyph->charpos == glyph->charpos)
+                                    ? true
+                                  : false;
+                    int posint = (row_position == POST_ZV)
+                                   ? -1
+                                 : (row_position == AT_ZV)
+                                    ? essentials.zv
+                                 : (glyph->bytepos != essentials.zv_byte
+                                    && glyph - row->glyphs[TEXT_AREA] == row->used[TEXT_AREA] - 1)
+                                   ? MATRIX_ROW_END_CHARPOS (row) - 1
+                                 : (glyph->bytepos == essentials.zv_byte
+                                    && glyph - row->glyphs[TEXT_AREA] == row->used[TEXT_AREA] - 1)
+                                   ? essentials.zv
+                                 : glyph->charpos;
+                    Lisp_Object specs = mc_assoc (make_fixnum (posint), BVAR (b, mc_conf));
+                    if (((header_line_format > 0 && vpos > 0)
+                         || header_line_format == 0)
+                        && !NILP (specs)
+                        && row->y <= window_text_bottom_y (w)
+                        && !skip_p
+                        && row_position != POST_ZV)
+                      {
+                        Lisp_Object lisp_type = mc_nth (1, specs);
+                        enum mc_cursor_type cursor_type = (CONSP (lisp_type))
+                                                          ? mc_lisp_to_cursor_type (XCAR (lisp_type))
+                                                          : mc_lisp_to_cursor_type (lisp_type);
+                        cursor_type = (glyph->type == IMAGE_GLYPH)
+                                      ? MC_HOLLOW_BOX
+                                      : cursor_type;
+                        int cursor_width = (CONSP (lisp_type))
+                                           ? XFIXNUM (XCAR (XCDR (lisp_type)))
+                                           : -1;
+                        Lisp_Object mc_foreground = mc_nth (2, specs);
+                        struct mc_RGB lsl_fg;
+                        if (STRINGP (mc_foreground))
+                          mc_xw_color_values (w, mc_foreground, &lsl_fg);
+                          else if (VECTORP (mc_foreground))
+                            {
+                              lsl_fg.red = XFLOAT_DATA (AREF (mc_foreground, 0));
+                              lsl_fg.green = XFLOAT_DATA (AREF (mc_foreground, 1));
+                              lsl_fg.blue = XFLOAT_DATA (AREF (mc_foreground, 2));
+                            }
+                            else if (NILP (mc_foreground))
+                              mc_color_picker (w, glyph, essentials, &lsl_fg,
+                                               posint, cursor_type, row_position,
+                                               MULTIPLE_CURSORS);
+                        int vpos = MATRIX_ROW_VPOS (row, matrix);
+                        int x_limit = text_area_width;
+                        mc_engine (w, matrix, row, glyph, area, relative_x,
+                                   x_limit, row->y, glyph - row->glyphs[TEXT_AREA],
+                                   vpos, cursor_type, cursor_width, cursor_matrix,
+                                   essentials, row_position, lsl_fg,
+                                   MULTIPLE_CURSORS, draw_p, from_where, MC_CACHE);
+                      }
+                  }
+                if (!NILP (BVAR (b, fc_visible))
+                    && (essentials.active_p
+                        || (!essentials.active_p
+                            && !NILP (BVAR (b, fc_inactive_windows))))
+                    // && essentials.fc_x <= text_area_width
+                    && essentials.fc_x < text_area_width
+                    && essentials.fc_x >= w->mc.lnum_pixel_width)
+                  {
+                    int x_limit = text_area_width;
+                    bool real_fake_cursor_p = (w->cursor.x == essentials.fc_x
+                                               && w->cursor.y == row->y
+                                               && w->cursor.hpos == glyph - row->glyphs[TEXT_AREA]
+                                               && w->cursor.vpos == vpos);
+                    int hpos = glyph - row->glyphs[TEXT_AREA];
+                    struct mc_RGB lsl_fg;
+                    mc_color_picker (w, glyph, essentials, &lsl_fg, -1, MC_BAR,
+                                     row_position, FILL_COLUMN);
+                    if (hpos >= hpos_start
+                        && hpos < hpos_start + hpos_length
+                        // && relative_x + glyph->pixel_width <= text_area_width
+                        && relative_x < text_area_width
+                        && ((header_line_format > 0 && vpos > 0)
+                            || header_line_format == 0)
+                        && ((glyph != glyph_end - 1
+                             && essentials.fc_x >= relative_x
+                             && essentials.fc_x < relative_x + glyph->pixel_width)
+                            || (glyph == glyph_end - 1
+                                && essentials.fc_x >= relative_x))
+                        && row->y <= window_text_bottom_y (w)
+                        && !real_fake_cursor_p)
+                      mc_engine (w, matrix, row, glyph, area, relative_x, x_limit,
+                                 row->y, hpos, vpos, MC_BAR, 1, cursor_matrix,
+                                 essentials, row_position, lsl_fg, FILL_COLUMN,
+                                 draw_p, from_where, FC_CACHE);
+                  }
+                if (!NILP (BVAR (b, crosshairs))
+                    && !NILP (BVAR (b, ch_horizontal_ruler))
+                    && (essentials.active_p
+                        || (!essentials.active_p
+                            && !NILP (BVAR (b, ch_inactive_windows))))
+                    && vpos == w->cursor.vpos)
+                  {
+                    int x_limit = text_area_width;
+                    int hpos = glyph - row->glyphs[TEXT_AREA];
+                    struct mc_RGB lsl_fg;
+                    mc_color_picker (w, glyph, essentials, &lsl_fg, -1, MC_HBAR,
+                                     row_position, HORIZONTAL_RULER);
+                    /* Preserve support for default behavior such that a user may
+                    specify the height of an MC_HBAR, which begins its journey
+                    as the `cursor_width'.  `mc_get_cursor_geometry' readjusts. */
+                    if (hpos >= hpos_start
+                        && hpos < hpos_start + hpos_length)
+                      mc_engine (w, matrix, row, glyph, area, relative_x, x_limit,
+                                 row->y, hpos, vpos, MC_HBAR, 1, cursor_matrix,
+                                 essentials, row_position, lsl_fg, HORIZONTAL_RULER,
+                                 draw_p, from_where, CH_CACHE);
+                  }
+                if (!NILP (BVAR (b, crosshairs))
+                    && !NILP (BVAR (b, ch_vertical_ruler))
+                    && (essentials.active_p
+                        || (!essentials.active_p
+                            && !NILP (BVAR (b, ch_inactive_windows))))
+                    && !fill_column_trumps_p)
+                  {
+                    cursor_type = (glyph->type == IMAGE_GLYPH)
+                                  ? MC_HOLLOW_BOX
+                                  : MC_BAR;
+                    int x_limit = text_area_width;
+                    bool real_fake_cursor_p = (w->cursor.y == row->y
+                                               && w->cursor.vpos == vpos);
+                    int hpos = glyph - row->glyphs[TEXT_AREA];
+                    struct mc_RGB lsl_fg;
+                    mc_color_picker (w, glyph, essentials, &lsl_fg, -1, cursor_type,
+                                     row_position, VERTICAL_RULER);
+                    if (hpos >= hpos_start
+                        && hpos < hpos_start + hpos_length
+                        && ((header_line_format > 0 && vpos > 0)
+                            || header_line_format == 0)
+                        && ((glyph != glyph_end - 1
+                             && w->cursor.x >= relative_x
+                             && w->cursor.x < relative_x + glyph->pixel_width)
+                            || (glyph == glyph_end - 1
+                                && w->cursor.x >= relative_x))
+                        && row->y <= window_text_bottom_y (w)
+                        && !real_fake_cursor_p)
+                      mc_engine (w, matrix, row, glyph, area, relative_x, x_limit,
+                                 row->y, hpos, vpos, cursor_type, 1, cursor_matrix,
+                                 essentials, row_position, lsl_fg, VERTICAL_RULER,
+                                 draw_p, from_where, CH_CACHE);
+                  }
+                relative_x += glyph->pixel_width;
+              }
+          }
+      }
+  //  clock_t clock_end = clock();
+  //  double cpu_time_used = ((double) (clock_end - clock_start)) / CLOCKS_PER_SEC;
+  //  fprintf (stderr, "mc_draw_row (%s):  TIME (%f)\n", mc_window (w), cpu_time_used);
+}
+
+bool
+mc_redraw_row (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+               enum glyph_row_area area, int start_x, int start_hpos, int end_hpos,
+               bool clear_eol_p, enum draw_glyphs_face hl,
+               enum mc_redraw_row_type from_where)
+{
+  bool go_p = ((w->mc_matrix.cursors_used[MC_CACHE] > 0
+                || w->mc_matrix.cursors_used[CH_CACHE] > 0
+                || w->mc_matrix.cursors_used[FC_CACHE] > 0)
+               && area == TEXT_AREA
+               && row->used[area]);
+  if (!go_p)
+    return false;
+  struct frame *f = XFRAME (WINDOW_FRAME (w));
+  int vpos = MATRIX_ROW_VPOS (row, matrix);
+  if (mc_stderr_p)
+    fprintf (stderr, "mc_redraw_row (%d):  %s\n\
+  start_x (%d) | start_hpos (%d) | end_hpos (%d)\n",
+  vpos, mc_redraw_row_type_to_string (from_where), start_x, start_hpos, end_hpos);
+  struct mc_RGB lsl = {.red = -1.0, .green = -1.0, .blue = -1.0};
+  enum mc_flavor glyph_flavor = NO_FLAVOR;
+  enum mc_cursor_type cursor_type = MC_NO_CURSOR;
+  int wd = -1;
+  bool active_p = (w == XWINDOW (f->selected_window)
+                   && f == FRAME_DISPLAY_INFO (f)->highlight_frame);
+  bool cursor_gc_p = false;
+  int overlaps = 0;
+  int x = 0;
+  bool draw_p = true;
+  //  clock_t clock_start = clock();
+  if (end_hpos > start_hpos)
+    x = mc_draw_glyphs (w, matrix, row, w->mc_matrix, start_x, TEXT_AREA,
+                        start_hpos, end_hpos, hl, overlaps, vpos, lsl,
+                        glyph_flavor, cursor_type, wd, active_p, cursor_gc_p,
+                        MC_DRAW_GLYPH_STRING, draw_p);
+  //  clock_t clock_end = clock();
+  //  double time_glyphs = ((double) (clock_end - clock_start)) / CLOCKS_PER_SEC;
+  /* `redraw_overlapped_rows' calls `rif->clear_end_of_line'. */
+  if (clear_eol_p
+      && end_hpos > start_hpos)
+    {
+      /* Advance the output cursor. */
+      w->output_cursor.hpos = end_hpos;
+      w->output_cursor.x = x;
+      FRAME_RIF (f)->clear_end_of_line (w, row, TEXT_AREA, -1);
+    }
+  //  clock_start = clock();
+  int vnth = MATRIX_ROW_VPOS (row, matrix);
+  /* STRETCH_GLYPH may contain more than one fake cursor at the same HPOS. */
+  for (enum mc_cache_type cache_type = MC_CACHE;
+       cache_type < NO_CACHE;
+       ++cache_type)
+    {
+      for (int nth = 0;
+           mc_traverse_cache_p (w->mc_matrix, cache_type, vnth, nth);
+           ++nth)
+        {
+          int x = w->mc_matrix.vpos[vnth].cache[cache_type][nth].x;
+          int fx = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fx;
+          int y = w->mc_matrix.vpos[vnth].cache[cache_type][nth].y;
+          int fy = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fy;
+          int hpos = w->mc_matrix.vpos[vnth].cache[cache_type][nth].hpos;
+          int vpos = w->mc_matrix.vpos[vnth].cache[cache_type][nth].vpos;
+          int wd = w->mc_matrix.vpos[vnth].cache[cache_type][nth].wd;
+          int h = w->mc_matrix.vpos[vnth].cache[cache_type][nth].h;
+          enum mc_cursor_type cursor_type = w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_type;
+          int cursor_width = w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_width;
+          struct mc_RGB lsl_fg = {.red = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.red,
+                                  .green = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.green,
+                                  .blue = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.blue};
+          //  struct mc_RGB lsl_bg = {.red = w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.red,
+          //                          .green = w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.green,
+          //                          .blue = w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.blue};
+          bool active_p = w->mc_matrix.vpos[vnth].cache[cache_type][nth].active_p;
+          enum mc_flavor glyph_flavor = w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph_flavor;
+          bool enabled_p = w->mc_matrix.vpos[vnth].cache[cache_type][nth].enabled_p;
+          if (vpos == vnth
+              && ((hpos >= start_hpos
+                   && hpos < end_hpos)
+                  /* A floating cursor beyond the end of the glyph row. */
+                  || (hpos + 1 == start_hpos
+                      && hpos + 1 == end_hpos))
+              && enabled_p)
+            {
+              bool remove_p = false;
+              mc_draw_erase_hybrid (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h,
+                                    cursor_type, cursor_width, lsl_fg, active_p,
+                                    glyph_flavor, remove_p);
+            }
+        }
+    }
+  return true;
+  //  clock_end = clock();
+  //  double time_cursors = ((double) (clock_end - clock_start)) / CLOCKS_PER_SEC;
+  //  fprintf (stderr, "mc_redraw_row (%d):  hpos (%d/%d) | glyphs (%f) | cursors (%f)\n",
+  //                   vpos, start_hpos, end_hpos, time_glyphs, time_cursors);
+}
+
+void
+mc_erase_row (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row)
+{
+  int vnth = MATRIX_ROW_VPOS (row, matrix);
+  if (mc_stderr_p)
+    fprintf (stderr, "mc_erase_row (%s):  vpos (%d)\n", mc_window (w), vnth);
+  //  if (mc_stderr_p)
+  //    fprintf (stderr, "mc_erase_helper (%s):  cache (%s) | vpos (%d)\n",
+  //      mc_window (w), mc_cache_type_to_string (cache_type), vnth);
+  for (enum mc_cache_type cache_type = MC_CACHE;
+       cache_type < NO_CACHE;
+       ++cache_type)
+    {
+      for (int nth = 0;
+           mc_traverse_cache_p (w->mc_matrix, cache_type, vnth, nth);
+           ++nth)
+        {
+          int x = w->mc_matrix.vpos[vnth].cache[cache_type][nth].x;
+          int fx = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fx;
+          int y = w->mc_matrix.vpos[vnth].cache[cache_type][nth].y;
+          int fy = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fy;
+          int hpos = w->mc_matrix.vpos[vnth].cache[cache_type][nth].hpos;
+          int vpos = w->mc_matrix.vpos[vnth].cache[cache_type][nth].vpos;
+          int wd = w->mc_matrix.vpos[vnth].cache[cache_type][nth].wd;
+          int h = w->mc_matrix.vpos[vnth].cache[cache_type][nth].h;
+          enum mc_cursor_type cursor_type = w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_type;
+          int cursor_width = w->mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_width;
+          //  struct mc_RGB lsl_fg = {.red = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.red,
+          //                          .green = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.green,
+          //                          .blue = w->mc_matrix.vpos[vnth].cache[cache_type][nth].fg.blue};
+          struct mc_RGB lsl_bg = {.red = w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.red,
+                                  .green = w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.green,
+                                  .blue = w->mc_matrix.vpos[vnth].cache[cache_type][nth].bg.blue};
+          bool active_p = w->mc_matrix.vpos[vnth].cache[cache_type][nth].active_p;
+          enum mc_flavor glyph_flavor = w->mc_matrix.vpos[vnth].cache[cache_type][nth].glyph_flavor;
+          bool enabled_p = w->mc_matrix.vpos[vnth].cache[cache_type][nth].enabled_p;
+          /* `matrix_row' in `dispnew.c` contains the following tests,
+          eassert (matrix && matrix->rows);
+          eassert (row >= 0 && row < matrix->nrows); */
+          bool barf_crash_one = (matrix && matrix->rows) ? false : true;
+          if (barf_crash_one)
+            continue;
+          bool barf_crash_two = (vpos >= 0 && vpos < matrix->nrows) ? false : true;
+          if (barf_crash_two)
+            continue;
+          if (vpos == vnth
+              && glyph_flavor == MC_GLYPH
+              && enabled_p)
+            {
+              mc_erase_cursor (w, matrix, row, w->mc_matrix, x, y, hpos, vpos,
+                               glyph_flavor, cursor_type, wd);
+              w->mc_matrix.vpos[vnth].cache[cache_type][nth].enabled_p = false;
+              --w->mc_matrix.cursors_used[cache_type];
+            }
+            else if (vpos == vnth
+                     && enabled_p)
+              {
+                bool remove_p = true;
+                mc_draw_erase_hybrid (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h,
+                                      cursor_type, cursor_width, lsl_bg, active_p,
+                                      glyph_flavor, remove_p);
+                w->mc_matrix.vpos[vnth].cache[cache_type][nth].enabled_p = false;
+                --w->mc_matrix.cursors_used[cache_type];
+              }
+        }
+      w->mc_matrix.vpos[vnth].cache_used[cache_type] = 0;
+    }
+}
+
+/* Erase fake cursors from (min, run.current_y, run.desired_y) to end of window.
+  TRY_WINDOW_REUSING_CURRENT_MATRIX_DOWN:
+    run.height = it.last_visible_y - run.desired_y
+    [emacs -q:  Hold up-arrow key triggering auto-recenter at scroll-margin.]
+  TRY_WINDOW_REUSING_CURRENT_MATRIX_UP:
+    run.height = it.last_visible_y - run.current_y;
+    [emacs -q:  Hold up-arrow key triggering auto-recenter at scroll-margin.]
+  TRY_WINDOW_ID:
+    run.height = it.last_visible_y - max (run.current_y, run.desired_y)
+    [Add or remove lines from the buffer; e.g., RET or DEL.]
+  +-------------+ <= it.current_y == 0
+  |             |
+  |             | <= run.desired_y == 270 [up (↑)] == run.current_y < run.desired_y
+  |             |    run.height = it.last_visible_y - run.current_y;
+  |             |    run.height == 1080 - 540 == 540
+  |             |    [The entire bottom rectangle gets copied to upper run.desired_y.]
+  |             |
+  +-------------+ <= run.current_y == 540
+  |             |
+  |             | <= run.desired_y == 810 [down (↓)] == run.current_y > run.desired_y
+  |             |    run.height = it.last_visible_y - run.desired_y
+  |             |    run.height == 1080 - 810 == 270
+  |             |    [Top part of the lower rectangle gets copied to lower run.desired_y.]
+  |             |
+  +-------------+ <= it.last_visible_y == 1080 */
+void
+mc_pre_scroll_clean (struct window *w, struct run run, int start_vpos,
+                     int nrows_scrolled, enum mc_pre_scroll_clean_type from_where)
+{
+  if (MINI_WINDOW_P (w))
+    return;
+  bool go_one_p = (w->mc_matrix.cursors_used[MC_CACHE] > 0
+                   || w->mc_matrix.cursors_used[CH_CACHE] > 0
+                   || w->mc_matrix.cursors_used[FC_CACHE] > 0);
+  bool go_two_p = (BUFFERP (w->contents)
+                   && (!NILP (BVAR (XBUFFER (w->contents), crosshairs))
+                       || !NILP (BVAR (XBUFFER (w->contents), fc_visible))
+                       || !NILP (BVAR (XBUFFER (w->contents), mc_conf))));
+  if (mc_stderr_p)
+    fprintf (stderr, "mc_pre_scroll_clean (%s):\n\
+  %s | go_one_p (%s) | go_two_p (%s)\n\
+  start_vpos (%d) | nrows_scrolled (%d)\n\
+  %s:  run.current/desired_y (%d/%d) | run.height (%d)\n",
+    mc_window (w), (from_where == TRY_WINDOW_REUSING_CURRENT_MATRIX_DOWN)
+                     ? "TRY_WINDOW_REUSING_CURRENT_MATRIX_DOWN"
+                   : (from_where == TRY_WINDOW_REUSING_CURRENT_MATRIX_UP)
+                     ? "TRY_WINDOW_REUSING_CURRENT_MATRIX_UP"
+                   : (from_where == TRY_WINDOW_ID)
+                     ? "TRY_WINDOW_ID"
+                   : "UNKNOWN",
+    go_one_p ? "yes" : "no", go_two_p ? "yes" : "no",
+    start_vpos, nrows_scrolled,
+    run.current_y < run.desired_y ? "↓" : "↑",
+    run.current_y, run.desired_y, run.height);
+  if (!go_one_p && !go_two_p)
+    return;
+  bool updating_frame_p = false;
+  struct frame *f = XFRAME (w->frame);
+  if (XFRAME (w->frame) != f->mc_updating_frame
+      && (go_one_p || go_two_p))
+    {
+      updating_frame_p = true;
+      update_begin (f);
+    }
+  if (w->phys_cursor_on_p
+      && go_two_p)
+    erase_phys_cursor (w);
+  struct glyph_matrix *matrix = w->current_matrix;
+  for (int vnth = start_vpos;
+       matrix != NULL
+       && vnth < matrix->nrows
+       && MATRIX_ROW (matrix, vnth)->enabled_p
+       && go_one_p;
+       ++vnth)
+    {
+      struct glyph_row *row = MATRIX_ROW (matrix, vnth);
+      mc_erase_row (w, matrix, row);
+    }
+  if (updating_frame_p)
+    update_end (f);
+  // mc_reset_cache (w);
+}
+
+DEFUN ("mc-stderr", Fmc_stderr, Smc_stderr, 0, 1, "P",
+       doc: /* Toggle tracing of multiple fake cursors.
+With ARG, turn tracing on if and only if ARG is positive. */)
+  (Lisp_Object arg)
+{
+  if (NILP (arg))
+    mc_stderr_p = !mc_stderr_p;
+  else
+    {
+      arg = Fprefix_numeric_value (arg);
+      mc_stderr_p = XFIXNUM (arg) > 0;
+    }
+  return Qnil;
+}
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 
 /***********************************************************************
 		      Window display dimensions
@@ -13511,6 +18397,69 @@ hscroll_window_tree (Lisp_Object window)
 	      else
 		pt = clip_to_bounds (BEGV, marker_position (w->pointm), ZV);
 
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+/* (gdb) bt
+#0  terminate_due_to_signal (sig=6, backtrace_limit=2147483647) at emacs.c:359
+#1  0x00000001001ee996 in die (
+    msg=0x10032fc88 "charpos < 0 || (charpos >= BUF_BEG (current_buffer) && charpos <= ZV)", file=0x10032e32d "xdisp.c", line=7951) at alloc.c:7214
+#2  0x000000010004d2ab in init_iterator (it=0x7fff5fbf9e80, w=0x11ae62150,
+    charpos=743, bytepos=743, row=0x0, base_face_id=DEFAULT_FACE_ID)
+    at xdisp.c:7950
+#3  0x000000010004efc9 in init_from_display_pos (it=0x7fff5fbf9e80,
+    w=0x11ae62150, pos=0x11f9c0250) at xdisp.c:8404
+#4  0x000000010004f546 in init_to_row_start (it=0x7fff5fbf9e80, w=0x11ae62150,
+    row=0x11f9c0200) at xdisp.c:8528
+#5  0x000000010006e536 in hscroll_window_tree (window=...) at xdisp.c:18619
+*/
+
+/* (gdb) bt
+#0  terminate_due_to_signal (sig=6, backtrace_limit=2147483647) at emacs.c:359
+#1  0x00000001001ecbc6 in die (
+    msg=0x10032fad8 "CHARPOS (pos) >= BEGV && CHARPOS (pos) <= ZV",
+    file=0x10032c49d "xdisp.c", line=11746) at alloc.c:7214
+#2  0x000000010005885d in reseat_1 (it=0x7fff5fbf9e30, pos=...,
+    set_stop_p=false) at xdisp.c:11746
+#3  0x0000000100058707 in reseat (it=0x7fff5fbf9e30, pos=..., force_p=true)
+    at xdisp.c:11698
+#4  0x000000010004c732 in init_iterator (it=0x7fff5fbf9e30, w=0x11bf72c98,
+    charpos=114549, bytepos=114549, row=0x0, base_face_id=DEFAULT_FACE_ID)
+    at xdisp.c:8143
+#5  0x000000010004ce01 in init_from_display_pos (it=0x7fff5fbf9e30,
+    w=0x11bf72c98, pos=0x121243d50) at xdisp.c:8299
+#6  0x000000010004d37e in init_to_row_start (it=0x7fff5fbf9e30, w=0x11bf72c98,
+    row=0x121243d00) at xdisp.c:8423
+#7  0x000000010006c3f7 in hscroll_window_tree (window=...) at xdisp.c:18546
+*/
+
+  /* `init_iterator':  eassert (charpos < 0
+                                || (charpos >= BUF_BEG (current_buffer)
+                                    && charpos <= ZV)); */
+
+  struct display_pos *pos = &cursor_row->start;
+  ptrdiff_t charpos = CHARPOS (pos->pos);
+
+  bool barf_crash_one = (charpos < 0
+                         || (charpos >= BUF_BEG (current_buffer)
+                             && charpos <= ZV))
+                        ? false
+                        : true;
+  if (barf_crash_one)
+    return hscrolled_p;
+
+  /* `reseat_1':  CHARPOS (pos) >= BEGV && CHARPOS (pos) <= ZV */
+  bool barf_crash_two = (charpos >= BEGV && charpos <= ZV)
+                         ? false
+                         : true;
+  if (barf_crash_two)
+    return hscrolled_p;
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 	      /* Move iterator to pt starting at cursor_row->start in
 		 a line with infinite width.  */
 	      init_to_row_start (&it, w, cursor_row);
@@ -14397,9 +19346,22 @@ redisplay_internal (void)
 	      *w->desired_matrix->method = 0;
 	      debug_method_add (w, "optimization 1");
 #endif
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
 #ifdef HAVE_WINDOW_SYSTEM
+  if (BUFFERP (w->contents)
+      && !NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+    mc_update_window_fringes (w, false);
+    else
 	      update_window_fringes (w, false);
 #endif
+
+/* *************************************************************************** */
+
+
 	      goto update;
 	    }
 	  else
@@ -17792,10 +22754,22 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
     }
 
 #ifdef HAVE_WINDOW_SYSTEM
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  bool keep_current_p = (just_this_one_p
+                         || (!used_current_matrix_p && !overlay_arrow_seen)
+                         || w->pseudo_window_p);
+
+  bool fringes_updated_p = (BUFFERP (w->contents)
+                            && !NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+                           ? mc_update_window_fringes (w, keep_current_p)
+                           : update_window_fringes (w, keep_current_p);
+
   if (FRAME_WINDOW_P (f)
-      && update_window_fringes (w, (just_this_one_p
-				    || (!used_current_matrix_p && !overlay_arrow_seen)
-				    || w->pseudo_window_p)))
+      && fringes_updated_p)
     {
       update_begin (f);
       block_input ();
@@ -17809,6 +22783,9 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
       unblock_input ();
       update_end (f);
     }
+
+/* *************************************************************************** */
+
 
   if (WINDOW_BOTTOM_DIVIDER_WIDTH (w))
     gui_draw_bottom_divider (w);
@@ -18125,6 +23102,16 @@ try_window_reusing_current_matrix (struct window *w)
 	      update_begin (f);
 	      gui_update_window_begin (w);
 	      FRAME_RIF (f)->clear_window_mouse_face (w);
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+    mc_pre_scroll_clean (w, run, start_vpos, nrows_scrolled, TRY_WINDOW_REUSING_CURRENT_MATRIX_DOWN);
+
+/* *************************************************************************** */
+
+
 	      FRAME_RIF (f)->scroll_run_hook (w, &run);
 	      gui_update_window_end (w, false, false);
 	      update_end (f);
@@ -18291,6 +23278,16 @@ try_window_reusing_current_matrix (struct window *w)
 	  update_begin (f);
 	  gui_update_window_begin (w);
 	  FRAME_RIF (f)->clear_window_mouse_face (w);
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+    mc_pre_scroll_clean (w, run, start_vpos, nrows_scrolled, TRY_WINDOW_REUSING_CURRENT_MATRIX_UP);
+
+/* *************************************************************************** */
+
+
 	  FRAME_RIF (f)->scroll_run_hook (w, &run);
 	  gui_update_window_end (w, false, false);
 	  update_end (f);
@@ -19245,6 +24242,16 @@ try_window_id (struct window *w)
 #ifdef HAVE_WINDOW_SYSTEM
 	  gui_update_window_begin (w);
 	  FRAME_RIF (f)->clear_window_mouse_face (w);
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+    mc_pre_scroll_clean (w, run, first_unchanged_at_end_vpos, dvpos, TRY_WINDOW_ID);
+
+/* *************************************************************************** */
+
+
 	  FRAME_RIF (f)->scroll_run_hook (w, &run);
 	  gui_update_window_end (w, false, false);
 #endif
@@ -21528,6 +26535,17 @@ maybe_produce_line_number (struct it *it)
       SET_TEXT_POS (tem_it.position, -1, -1);
       PRODUCE_GLYPHS (&tem_it);
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      /* This permits us to inspect the HPOS of line number glyphs and the space
+      padding before/after the line numbers.  We set `glyph->hpos` elsewhere. */
+      tem_it.hpos += 1;
+
+/* *************************************************************************** */
+
+
       /* Stop producing glyphs, and refrain from producing the line
 	 number, if we don't have enough space on this line.  */
       if (tem_it.current_x >= width_limit)
@@ -21538,6 +26556,28 @@ maybe_produce_line_number (struct it *it)
 	  return;
 	}
     }
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  struct buffer *b = XBUFFER (it->w->contents);
+  struct buffer *old_buffer = NULL;
+  /* Needed so that buffer-local values can be determined; e.g., when switching
+  to the minibuffer. */
+  if (b != current_buffer)
+    {
+      old_buffer = current_buffer;
+      set_buffer_internal (b);
+    }
+  it->w->mc.lnum_pixel_width = (!NILP (Vdisplay_line_numbers))
+                               ? tem_it.current_x
+                               : 0;
+  if (old_buffer)
+    set_buffer_internal (old_buffer);
+
+/* *************************************************************************** */
+
 
   /* Record the width in pixels we need for the line number display.  */
   it->lnum_pixel_width = tem_it.current_x;
@@ -27360,6 +32400,17 @@ append_glyph (struct it *it)
 	    g[1] = *g;
 	  glyph = it->glyph_row->glyphs[area];
 	}
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      glyph->hpos = it->hpos;
+      glyph->bytepos = IT_BYTEPOS (*it);
+
+/* *************************************************************************** */
+
+
       glyph->charpos = CHARPOS (it->position);
       glyph->object = it->object;
       if (it->pixel_width > 0)
@@ -27442,6 +32493,17 @@ append_composite_glyph (struct it *it)
 	    g[1] = *g;
 	  glyph = it->glyph_row->glyphs[it->area];
 	}
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      glyph->hpos = it->hpos;
+      glyph->bytepos = IT_BYTEPOS (*it);
+
+/* *************************************************************************** */
+
+
       glyph->charpos = it->cmp_it.charpos;
       glyph->object = it->object;
       eassert (it->pixel_width <= SHRT_MAX);
@@ -27650,6 +32712,17 @@ produce_image_glyph (struct it *it)
 	}
       if (glyph < it->glyph_row->glyphs[area + 1])
 	{
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      glyph->hpos = it->hpos;
+      glyph->bytepos = IT_BYTEPOS (*it);
+
+/* *************************************************************************** */
+
+
 	  glyph->charpos = CHARPOS (it->position);
 	  glyph->object = it->object;
 	  glyph->pixel_width = clip_to_bounds (-1, it->pixel_width, SHRT_MAX);
@@ -27753,6 +32826,17 @@ produce_xwidget_glyph (struct it *it)
 	}
       if (glyph < it->glyph_row->glyphs[area + 1])
 	{
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      glyph->hpos = it->hpos;
+      glyph->bytepos = IT_BYTEPOS (*it);
+
+/* *************************************************************************** */
+
+
 	  glyph->charpos = CHARPOS (it->position);
 	  glyph->object = it->object;
 	  glyph->pixel_width = clip_to_bounds (-1, it->pixel_width, SHRT_MAX);
@@ -27839,6 +32923,17 @@ append_stretch_glyph (struct it *it, Lisp_Object object,
 	    width -= it->first_visible_x - it->current_x;
 	  eassert (width > 0);
 	}
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      glyph->hpos = it->hpos;
+      glyph->bytepos = IT_BYTEPOS (*it);
+
+/* *************************************************************************** */
+
+
       glyph->charpos = CHARPOS (it->position);
       glyph->object = object;
       /* FIXME: It would be better to use TYPE_MAX here, but
@@ -28293,6 +33388,17 @@ append_glyphless_glyph (struct it *it, int face_id, bool for_no_font, int len,
 	    g[1] = *g;
 	  glyph = it->glyph_row->glyphs[area];
 	}
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      glyph->hpos = it->hpos;
+      glyph->bytepos = IT_BYTEPOS (*it);
+
+/* *************************************************************************** */
+
+
       glyph->charpos = CHARPOS (it->position);
       glyph->object = it->object;
       eassert (it->pixel_width <= SHRT_MAX);
@@ -29343,9 +34449,19 @@ gui_insert_glyphs (struct window *w, struct glyph_row *updated_row,
 
   /* Write the glyphs.  */
   hpos = start - row->glyphs[updated_area];
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  if (!mc_redraw_row (w, w->current_matrix, row, updated_area, w->output_cursor.x,
+                      hpos, hpos + len, false, DRAW_NORMAL_TEXT, GUI_INSERT_GLYPHS))
   draw_glyphs (w, w->output_cursor.x, row, updated_area,
 	       hpos, hpos + len,
 	       DRAW_NORMAL_TEXT, 0);
+
+/* *************************************************************************** */
+
 
   /* Advance the output cursor.  */
   w->output_cursor.hpos += len;
@@ -29772,9 +34888,19 @@ gui_fix_overlapping_area (struct window *w, struct glyph_row *row,
 	  while (i < row->used[area]
 		 && row->glyphs[area][i].overlaps_vertically_p);
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      if (!mc_redraw_row (w, w->current_matrix, row, area, start_x, start, i,
+          false, DRAW_NORMAL_TEXT, GUI_FIX_OVERLAPPING_AREA))
 	  draw_glyphs (w, start_x, row, area,
 		       start, i,
 		       DRAW_NORMAL_TEXT, overlaps);
+
+/* *************************************************************************** */
+
+
 	}
       else
 	{
@@ -30025,10 +35151,20 @@ display_and_set_cursor (struct window *w, bool on,
   new_cursor_type = get_window_cursor_type (w, glyph,
 					    &new_cursor_width, &active_cursor);
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
   /* If cursor is currently being shown and we don't want it to be or
      it is in the wrong place, or the cursor type is not what we want,
      erase it.  */
   if (w->phys_cursor_on_p
+      && NILP (BVAR (XBUFFER (w->contents), crosshairs))
+      && NILP (BVAR (XBUFFER (w->contents), fc_visible))
+      && NILP (BVAR (XBUFFER (w->contents), mc_conf))
+      && w->mc_matrix.cursors_used[MC_CACHE] == 0
+      && w->mc_matrix.cursors_used[CH_CACHE] == 0
+      && w->mc_matrix.cursors_used[FC_CACHE] == 0
       && (!on
 	  || w->phys_cursor.x != x
 	  || w->phys_cursor.y != y
@@ -30040,6 +35176,9 @@ display_and_set_cursor (struct window *w, bool on,
 	  || ((new_cursor_type == BAR_CURSOR || new_cursor_type == HBAR_CURSOR)
 	      && new_cursor_width != w->phys_cursor_width)))
     erase_phys_cursor (w);
+
+/* *************************************************************************** */
+
 
   /* Don't check phys_cursor_on_p here because that flag is only set
      to false in some cases where we know that the cursor has been
@@ -30059,9 +35198,23 @@ display_and_set_cursor (struct window *w, bool on,
       w->phys_cursor.vpos = vpos;
     }
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  if (NILP (BVAR (XBUFFER (w->contents), crosshairs))
+      && NILP (BVAR (XBUFFER (w->contents), fc_visible))
+      && NILP (BVAR (XBUFFER (w->contents), mc_conf))
+      && w->mc_matrix.cursors_used[MC_CACHE] == 0
+      && w->mc_matrix.cursors_used[CH_CACHE] == 0
+      && w->mc_matrix.cursors_used[FC_CACHE] == 0)
   FRAME_RIF (f)->draw_window_cursor (w, glyph_row, x, y,
                                      new_cursor_type, new_cursor_width,
                                      on, active_cursor);
+
+/* *************************************************************************** */
+
+
 }
 
 
@@ -30154,7 +35307,18 @@ draw_row_with_mouse_face (struct window *w, int start_x, struct glyph_row *row,
 #ifdef HAVE_WINDOW_SYSTEM
   if (FRAME_WINDOW_P (XFRAME (w->frame)))
     {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      if (!mc_redraw_row (w, w->current_matrix, row, TEXT_AREA, start_x,
+                          start_hpos, end_hpos, false, draw, DRAW_ROW_WITH_MOUSE_FACE))
       draw_glyphs (w, start_x, row, TEXT_AREA, start_hpos, end_hpos, draw, 0);
+
+/* *************************************************************************** */
+
+
       return;
     }
 #endif
@@ -32214,11 +37378,23 @@ expose_area (struct window *w, struct glyph_row *row, const Emacs_Rectangle *r,
   struct glyph *last;
   int first_x, start_x, x;
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
   if (area == TEXT_AREA && row->fill_line_p)
+    {
+      if (!mc_redraw_row (w, w->current_matrix, row, area, 0, 0, row->used[area],
+                          false, DRAW_NORMAL_TEXT, EXPOSE_AREA_ONE))
     /* If row extends face to end of line write the whole line.  */
     draw_glyphs (w, 0, row, area,
 		 0, row->used[area],
 		 DRAW_NORMAL_TEXT, 0);
+    }
+
+/* *************************************************************************** */
+
+
   else
     {
       /* Set START_X to the window-relative start position for drawing glyphs of
@@ -32250,11 +37426,23 @@ expose_area (struct window *w, struct glyph_row *row, const Emacs_Rectangle *r,
 	  ++last;
 	}
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
       /* Repaint.  */
-      if (last > first)
+      /* Floating fake cursors will exist when (last == first). */
+      if (!mc_redraw_row (w, w->current_matrix, row, area, first_x - start_x,
+                          first - row->glyphs[area], last - row->glyphs[area],
+                          false, DRAW_NORMAL_TEXT, EXPOSE_AREA_TWO)
+          && last > first)
 	draw_glyphs (w, first_x - start_x, row, area,
 		     first - row->glyphs[area], last - row->glyphs[area],
 		     DRAW_NORMAL_TEXT, 0);
+
+/* *************************************************************************** */
+
+
     }
 }
 
@@ -32268,10 +37456,22 @@ expose_line (struct window *w, struct glyph_row *row, const Emacs_Rectangle *r)
 {
   eassert (row->enabled_p);
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
   if (row->mode_line_p || w->pseudo_window_p)
+    {
+      if (!mc_redraw_row (w, w->current_matrix, row, TEXT_AREA, 0, 0,
+                          row->used[TEXT_AREA], false, DRAW_NORMAL_TEXT, EXPOSE_LINE))
     draw_glyphs (w, 0, row, TEXT_AREA,
 		 0, row->used[TEXT_AREA],
 		 DRAW_NORMAL_TEXT, 0);
+    }
+
+/* *************************************************************************** */
+
+
   else
     {
       if (row->used[LEFT_MARGIN_AREA])
@@ -32819,6 +38019,22 @@ gui_intersect_rectangles (const Emacs_Rectangle *r1, const Emacs_Rectangle *r2,
 void
 syms_of_xdisp (void)
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  defsubr (&Smc_dump_glyph_row);
+
+  defsubr (&Smc_dump_glyph_matrix);
+
+  defsubr (&Smc_current_column);
+
+  defsubr (&Smc_stderr);
+
+/* *************************************************************************** */
+
+
   Vwith_echo_area_save_vector = Qnil;
   staticpro (&Vwith_echo_area_save_vector);
 

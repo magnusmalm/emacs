@@ -663,6 +663,16 @@ typedef id instancetype;
 
 @interface EmacsScroller : NSScroller
   {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+    NSRect mc_rectangle;
+
+/* *************************************************************************** */
+
+
    struct window *window;
    struct frame *frame;
    NSResponder *prevResponder;
@@ -682,6 +692,18 @@ typedef id instancetype;
    int em_portion;
    int em_whole;
    }
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+- (void)mc_set_rectangle: (NSRect)rect;
+- (NSRect)mc_get_rectangle;
+- (struct window *)mc_get_window;
+- (bool)mc_judge;
+
+/* *************************************************************************** */
+
 
 - (instancetype) initFrame: (NSRect )r window: (Lisp_Object)win;
 - (void)setFrame: (NSRect)r;

@@ -76,6 +76,976 @@ static EmacsMenu *dockMenu;
 static EmacsMenu *mainMenu;
 #endif
 
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+static BOOL ns_clip_to_rect (struct frame *, NSRect *, int);
+
+static void ns_reset_clipping (struct frame *);
+
+static void ns_dumpglyphs_box_or_relief (struct glyph_string *);
+
+static void ns_draw_composite_glyph_string_foreground (struct glyph_string *);
+
+static int ns_get_glyph_string_clip_rect (struct glyph_string *, NativeRectangle *);
+
+static void ns_draw_relief (NSRect, int, char, char, char, char, char, struct glyph_string *);
+
+static void ns_draw_box (NSRect, CGFloat, NSColor *, char, char);
+
+static void ns_draw_underwave (struct glyph_string *, EmacsCGFloat, EmacsCGFloat);
+
+/* Current design assumes that alpha is 1.0 */
+void
+mc_xw_color_values (struct window *w, Lisp_Object color, struct mc_RGB *lsl)
+{
+  CHECK_STRING (color);
+  NSColor * col;
+  EmacsCGFloat red, green, blue, alpha;
+  check_window_system (NULL);
+  block_input ();
+  if (ns_lisp_to_color (color, &col))
+    {
+      unblock_input ();
+      lsl->red = -1.0;
+      lsl->green = -1.0;
+      lsl->blue = -1.0;
+    }
+  [[col colorUsingDefaultColorSpace]
+        getRed: &red green: &green blue: &blue alpha: &alpha];
+  unblock_input ();
+  lsl->red = red;
+  lsl->green = green;
+  lsl->blue = blue;
+}
+
+/* When `mc_update_window_dryrun' calls `mc_update_window_erase', it is necessary
+   to use the `mc_matrix` from the previous command loop -- the `w->matrix` for
+   the current command loop has already been updated even though the contents of
+   the window have not yet been updated.  In other cases, we use `w->mc_matrix`. */
+static void
+mc_ns_draw_overwritten (struct glyph_string *s, struct glyph_matrix *matrix,
+                        struct glyph_row *row, struct mc_matrix mc_matrix,
+                        struct glyph *cursor_glyph)
+{
+  //  int vpos = MATRIX_ROW_VPOS (row, matrix);
+  //  clock_t clock_start = clock();
+  // ns_draw_underwave (s, s->width, s->x);
+  NSColor *hollow_color = FRAME_BACKGROUND_COLOR (s->f);
+  struct face *face = FACE_FROM_ID (s->f, DEFAULT_FACE_ID);
+  int vnth = MATRIX_ROW_VPOS (row, matrix);
+  /* STRETCH_GLYPH may contain more than one fake cursor at the same HPOS.
+  NOTE:  A fake cursor from one cache may overwrite a fake cursor from another
+  cache -- thus, we must check them all for overwritten fake cursors. */
+  for (enum mc_cache_type cache_type = MC_CACHE;
+       cache_type < NO_CACHE;
+       ++cache_type)
+    {
+      for (int nth = 0;
+           s
+           && mc_traverse_cache_p (mc_matrix, cache_type, vnth, nth);
+           ++nth)
+        {
+          //  int x = mc_matrix.vpos[vnth].cache[cache_type][nth].x;
+          int fx = mc_matrix.vpos[vnth].cache[cache_type][nth].fx;
+          //  int y = mc_matrix.vpos[vnth].cache[cache_type][nth].y;
+          int fy = mc_matrix.vpos[vnth].cache[cache_type][nth].fy;
+          int hpos = mc_matrix.vpos[vnth].cache[cache_type][nth].hpos;
+          int vpos = mc_matrix.vpos[vnth].cache[cache_type][nth].vpos;
+          int wd = mc_matrix.vpos[vnth].cache[cache_type][nth].wd;
+          int h = mc_matrix.vpos[vnth].cache[cache_type][nth].h;
+          enum mc_cursor_type cursor_type = mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_type;
+          //  int cursor_width = mc_matrix.vpos[vnth].cache[cache_type][nth].cursor_width;
+          struct mc_RGB lsl_fg = {.red = mc_matrix.vpos[vnth].cache[cache_type][nth].fg.red,
+                                  .green = mc_matrix.vpos[vnth].cache[cache_type][nth].fg.green,
+                                  .blue = mc_matrix.vpos[vnth].cache[cache_type][nth].fg.blue};
+          //  struct mc_RGB lsl_bg = {.red = mc_matrix.vpos[vnth].cache[cache_type][nth].bg.red,
+          //                          .green = mc_matrix.vpos[vnth].cache[cache_type][nth].bg.green,
+          //                          .blue = mc_matrix.vpos[vnth].cache[cache_type][nth].bg.blue};
+          bool active_p = mc_matrix.vpos[vnth].cache[cache_type][nth].active_p;
+          //  enum mc_flavor glyph_flavor = mc_matrix.vpos[vnth].cache[cache_type][nth].glyph_flavor;
+          bool enabled_p = mc_matrix.vpos[vnth].cache[cache_type][nth].enabled_p;
+          bool go_p = (vpos == vnth
+                       && hpos == cursor_glyph->hpos
+                       && enabled_p);
+          if (!go_p)
+            continue;
+          NSRect r;
+          r.origin.x = fx;
+          r.origin.y = fy;
+          r.size.height = h;
+          r.size.width = wd;
+          [[NSColor colorWithCalibratedRed: lsl_fg.red
+                                     green: lsl_fg.green
+                                      blue: lsl_fg.blue
+                                     alpha: 1.0] set];
+      if (cursor_type == MC_FRAMED_BOX)
+        {
+          struct buffer *b = XBUFFER (s->w->contents);
+          bool region_active_p = (!NILP (Vtransient_mark_mode)
+                                  && !NILP (BVAR (b, mark_active)));
+          ptrdiff_t region_beg = (region_active_p) ? mc_region_limit (1) : -1;
+          ptrdiff_t region_end = (region_active_p) ? mc_region_limit (0) : -1;
+          if (region_active_p
+              && active_p
+              && cursor_glyph->charpos == region_beg)
+            {
+              enum face_id hollow_active_region_beg_face_id = lookup_named_face (s->w, s->f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+              struct face *hollow_active_region_beg_face = FACE_FROM_ID (s->f, hollow_active_region_beg_face_id);
+              NSColor *hollow_active_region_beg_color = ns_lookup_indexed_color (NS_FACE_FOREGROUND (hollow_active_region_beg_face), s->f);
+              hollow_color = hollow_active_region_beg_color;
+            }
+            else if (region_active_p
+                     && active_p
+                     && cursor_glyph->charpos == region_end)
+              {
+                enum face_id hollow_active_region_end_face_id = lookup_named_face (s->w, s->f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+                struct face *hollow_active_region_end_face = FACE_FROM_ID (s->f, hollow_active_region_end_face_id);
+                NSColor *hollow_active_region_end_color = ns_lookup_indexed_color (NS_FACE_BACKGROUND (hollow_active_region_end_face), s->f);
+                hollow_color = hollow_active_region_end_color;
+              }
+              else if (region_active_p
+                       && active_p
+                       && cursor_glyph->charpos > region_beg
+                       && cursor_glyph->charpos < region_end)
+                {
+                  enum face_id hollow_active_region_between_face_id = lookup_named_face (s->w, s->f, intern ("+-real-fake-cursor-in-region-pre-zv-face"), true);
+                  struct face *hollow_active_region_between_face = FACE_FROM_ID (s->f, hollow_active_region_between_face_id);
+                  NSColor *hollow_active_region_between_color = ns_lookup_indexed_color (NS_FACE_FOREGROUND (hollow_active_region_between_face), s->f);
+                  hollow_color = hollow_active_region_between_color;
+                }
+                else if (active_p)
+                  {
+                    enum face_id hollow_active_face_id = lookup_named_face (s->w, s->f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                    struct face *hollow_active_face = FACE_FROM_ID (s->f, hollow_active_face_id);
+                    NSColor *hollow_active_color = ns_lookup_indexed_color (NS_FACE_BACKGROUND (hollow_active_face), s->f);
+                    hollow_color = hollow_active_color;
+                  }
+                  else if (!active_p)
+                    {
+                      enum face_id hollow_inactive_face_id = lookup_named_face (s->w, s->f, intern ("+-real-fake-cursor-inactive-pre-zv-face"), true);
+                      struct face *hollow_inactive_face = FACE_FROM_ID (s->f, hollow_inactive_face_id);
+                      NSColor *hollow_inactive_color = ns_lookup_indexed_color (NS_FACE_BACKGROUND (hollow_inactive_face), s->f);
+                      hollow_color = hollow_inactive_color;
+                    }
+        }
+        else if (face && NS_FACE_BACKGROUND (face) == ns_index_color (FRAME_CURSOR_COLOR (s->f), s->f))
+          {
+            [ns_lookup_indexed_color (NS_FACE_FOREGROUND (face), s->f) set];
+            hollow_color = FRAME_CURSOR_COLOR (s->f);
+          }
+          switch (cursor_type)
+            {
+              case MC_NO_FRINGE_BITMAP:
+                break;
+              case MC_NO_CURSOR:
+                break;
+              case MC_RIGHT_FRINGE_BITMAP:
+              case MC_LEFT_FRINGE_BITMAP:
+              case MC_FILLED_BOX:
+                NSRectFill (r);
+                break;
+              case MC_FRAMED_BOX:
+                NSRectFill (r);
+                [hollow_color set];
+                NSRectFill (NSInsetRect (r, 1, 1));
+                [FRAME_CURSOR_COLOR (s->f) set];
+                break;
+              case MC_HOLLOW_BOX:
+                NSRectFill (r);
+                [hollow_color set];
+                NSRectFill (NSInsetRect (r, 1, 1));
+                [FRAME_CURSOR_COLOR (s->f) set];
+                break;
+              case MC_HBAR:
+                NSRectFill (r);
+                break;
+              case MC_BAR:
+                NSRectFill (r);
+                break;
+            }
+          /* If a glyph exists (s->char2b != NULL), then draw the glyph on top of the
+          newly drawn rectangle that was created hereinabove.  To the extent that we
+          want to double-imprint glyphs to make them appear to be semi-bold, it can
+          be done here for all cursor types.  The box-style cursors are imprinted
+          with glyphs only one (1) time.  The semi-bold appearance is helpful when
+          debugging to see that the coordinates are correct. */
+          if (s->char2b != NULL
+              && (cursor_type == MC_FILLED_BOX
+                  || cursor_type == MC_FRAMED_BOX
+                  || cursor_type == MC_HOLLOW_BOX))
+            {
+              BOOL isComposite = s->first_glyph->type == COMPOSITE_GLYPH;
+              if (isComposite)
+                ns_draw_composite_glyph_string_foreground (s);
+                else
+                  {
+                    struct font *font = s->face->font;
+                    if (!font)
+                      font = FRAME_FONT (s->f);
+                    bool with_bg_p = false;
+                    font->driver->draw (s, s->cmp_from, s->nchars, s->x, s->ybase, with_bg_p);
+                  }
+            }
+        }
+    }
+  //  clock_t clock_end = clock();
+  //  double cpu_time_used = ((double) (clock_end - clock_start)) / CLOCKS_PER_SEC;
+  //  fprintf (stderr, "ns_draw_overwritten (%d):  TIME (%f)\n", vpos, cpu_time_used);
+}
+
+static void
+mc_ns_draw_window_cursor (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                  int x, int fx, int y, int fy, int hpos, int vpos, int wd, int h,
+                  struct mc_RGB lsl, enum mc_cursor_type cursor_type,
+                  int cursor_width, enum mc_flavor glyph_flavor, bool on_p, bool active_p)
+{
+  /* The prior bug of a double imprint on the glyph where an MC_HBAR and
+  MC_BAR is placed is quite helpful to visualize errors when debugging. */
+  bool debug_p = false;
+/*
+  if (mc_stderr_p)
+    fprintf (stderr, "mc_ns_draw_window_cursor (%s):\n\
+  x (%d) | fx (%d) | y (%d) | fy (%d) | hpos (%d) | vpos (%d)\n\
+  wd (%d) | h (%d) | RGB (%f/%f/%f)\n\
+  cursor_type (%s) | cursor_width (%d) | on_p (%s) | active_p (%s)\n\
+  glyph_flavor (%s)\n",
+  mc_window (w), x, fx, y, fy, hpos, vpos, wd, h, lsl.red, lsl.blue, lsl.green,
+  mc_cursor_type_to_string (cursor_type), cursor_width, on_p ? "y" : "n",
+  active_p ? "y" : "n", mc_flavor_to_string (glyph_flavor));
+*/
+  NSRect r, s;
+  struct frame *f = WINDOW_XFRAME (w);
+  struct glyph *cursor_glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+  struct face *face;
+  NSColor *hollow_color = FRAME_BACKGROUND_COLOR (f);
+  /* If cursor is out of bounds, don't draw garbage.  This can happen
+     in mini-buffer windows when switching between echo area glyphs
+     and mini-buffer. */
+  if (!on_p)
+    return;
+  if (cursor_type == MC_NO_CURSOR)
+    return;
+  /* The fringe bitmaps are presently handled elsewhere, but could someday be
+  managed (in part) at this section of code. */
+  if (row->exact_window_width_line_p
+      && (row->reversed_p
+         ? (hpos < 0)
+         : (hpos >= row->used[TEXT_AREA])))
+    {
+      row->cursor_in_fringe_p = true;
+      mc_draw_fringe_bitmap (w, row, row->reversed_p, cursor_type);
+      return;
+    }
+  r.origin.x = fx;
+  r.origin.y = fy;
+  r.size.height = h;
+  r.size.width = wd;
+  /* `ns_clip_to_rect' must precede the setting of faces so as to avoid
+     unsightly gdb error messages that are next to impossible to debug:
+       Thu Mar 28 13:54:32 server.local Emacs[17207] <Error>:
+       CGContextSetFillColorWithColor: invalid context 0x0. */
+  if (!ns_clip_to_rect (f, &r, 1))
+    return;
+  face = FACE_FROM_ID (f, cursor_glyph->face_id);
+/* EXAMPLE OF HOW TO LOOK-UP A COLOR:
+     enum face_id face_id = lookup_named_face (w, f, intern ("+-bar-pre-zv-face"), true);
+     struct face *face = FACE_FROM_ID (f, face_id);
+     NSColor *color = ns_lookup_indexed_color (NS_FACE_FOREGROUND (face), f);
+  -  EXAMPLE OF HOW TO PRINT A COLOR TO STDERR:
+     Lisp_Object foreground = face->lface[LFACE_FOREGROUND_INDEX];
+     Lisp_Object background = face->lface[LFACE_BACKGROUND_INDEX];
+     fprintf (stderr, "\nforeground (%s) | background (%s)\n",
+                      (!NILP (foreground) ? SSDATA (foreground) : "NILP"),
+                      (!NILP (background) ? SSDATA (background) : "NILP"));
+  -  EXAMPLE OF HOW TO CREATE A COLOR WITH RGB/LSL float values:
+     NSColor *my_color = [NSColor colorWithCalibratedRed: 1.0
+                                                   green: 1.0
+                                                    blue: 1.0
+                                                   alpha: 1.0];
+  -  ALTERNATIVE EXAMPLE:
+     enum face_id debugging_face_id = lookup_named_face (s->w, s->f, intern ("+-debugging-face"), true);
+     struct face *debugging_face = FACE_FROM_ID (s->f, debugging_face_id);
+     NSColor *color = ns_lookup_indexed_color (NS_FACE_FOREGROUND (debugging_face), s->f);
+     [color set]; */
+  if (glyph_flavor == MC_GLYPH
+      || glyph_flavor == MC_GLYPHLESS)
+    [[NSColor colorWithCalibratedRed: lsl.red
+                               green: lsl.green
+                                blue: lsl.blue
+                               alpha: 1.0] set];
+    else
+      [FRAME_CURSOR_COLOR (f) set];
+  if (cursor_type == MC_FRAMED_BOX)
+    {
+      struct buffer *b = XBUFFER (w->contents);
+      bool region_active_p = (!NILP (Vtransient_mark_mode)
+                              && !NILP (BVAR (b, mark_active)));
+      ptrdiff_t region_beg = (region_active_p) ? mc_region_limit (1) : -1;
+      ptrdiff_t region_end = (region_active_p) ? mc_region_limit (0) : -1;
+      if (region_active_p
+          && active_p
+          && cursor_glyph->charpos == region_beg)
+        {
+          enum face_id hollow_active_region_beg_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+          struct face *hollow_active_region_beg_face = FACE_FROM_ID (f, hollow_active_region_beg_face_id);
+          NSColor *hollow_active_region_beg_color = ns_lookup_indexed_color (NS_FACE_FOREGROUND (hollow_active_region_beg_face), f);
+          hollow_color = hollow_active_region_beg_color;
+        }
+        else if (region_active_p
+                 && active_p
+                 && cursor_glyph->charpos == region_end)
+          {
+            enum face_id hollow_active_region_end_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+            struct face *hollow_active_region_end_face = FACE_FROM_ID (f, hollow_active_region_end_face_id);
+            NSColor *hollow_active_region_end_color = ns_lookup_indexed_color (NS_FACE_BACKGROUND (hollow_active_region_end_face), f);
+            hollow_color = hollow_active_region_end_color;
+          }
+          else if (region_active_p
+                   && active_p
+                   && cursor_glyph->charpos > region_beg
+                   && cursor_glyph->charpos < region_end)
+            {
+              enum face_id hollow_active_region_between_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-in-region-pre-zv-face"), true);
+              struct face *hollow_active_region_between_face = FACE_FROM_ID (f, hollow_active_region_between_face_id);
+              NSColor *hollow_active_region_between_color = ns_lookup_indexed_color (NS_FACE_FOREGROUND (hollow_active_region_between_face), f);
+              hollow_color = hollow_active_region_between_color;
+            }
+            else if (active_p)
+              {
+                enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                NSColor *hollow_active_color = ns_lookup_indexed_color (NS_FACE_BACKGROUND (hollow_active_face), f);
+                hollow_color = hollow_active_color;
+              }
+              /* The region is _not_ visible in the inactive window because the overlay window property is used. */
+              else if (!active_p)
+                {
+                  enum face_id hollow_inactive_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-inactive-pre-zv-face"), true);
+                  struct face *hollow_inactive_face = FACE_FROM_ID (f, hollow_inactive_face_id);
+                  NSColor *hollow_inactive_color = ns_lookup_indexed_color (NS_FACE_BACKGROUND (hollow_inactive_face), f);
+                  hollow_color = hollow_inactive_color;
+                }
+    }
+    else if (face && NS_FACE_BACKGROUND (face) == ns_index_color (FRAME_CURSOR_COLOR (f), f))
+      {
+        [ns_lookup_indexed_color (NS_FACE_FOREGROUND (face), f) set];
+        hollow_color = FRAME_CURSOR_COLOR (f);
+      }
+#ifdef NS_IMPL_COCOA
+  NSDisableScreenUpdates ();
+#endif
+  switch (cursor_type)
+    {
+      case MC_NO_FRINGE_BITMAP:
+        break;
+      case MC_NO_CURSOR:
+        break;
+      case MC_RIGHT_FRINGE_BITMAP:
+        break;
+      case MC_LEFT_FRINGE_BITMAP:
+        break;
+      case MC_FILLED_BOX:
+        NSRectFill (r);
+        break;
+      case MC_FRAMED_BOX:
+        NSRectFill (r);
+        [hollow_color set];
+        NSRectFill (NSInsetRect (r, 1, 1));
+        [FRAME_CURSOR_COLOR (f) set];
+        break;
+      case MC_HOLLOW_BOX:
+        NSRectFill (r);
+        [hollow_color set];
+        NSRectFill (NSInsetRect (r, 1, 1));
+        [FRAME_CURSOR_COLOR (f) set];
+        break;
+      case MC_HBAR:
+        NSRectFill (r);
+        break;
+      case MC_BAR:
+        s = r;
+        /* @lawlist is focusing the initial development of feature requests
+        #17684 and #22873 on L2R languages. */
+        if (glyph_flavor != MC_GLYPH
+            && glyph_flavor != MC_GLYPHLESS)
+          {
+            /* If the character under cursor is R2L, draw the bar cursor
+               on the right of its glyph, rather than on the left. */
+            if ((cursor_glyph->resolved_level & 1) != 0)
+              s.origin.x += cursor_glyph->pixel_width - s.size.width;
+          }
+        NSRectFill (s);
+        break;
+    }
+  ns_reset_clipping (f);
+  /* draw the character under the cursor */
+  if (glyph_flavor != MC_GLYPHLESS
+      && (cursor_type == MC_FRAMED_BOX
+          || cursor_type == MC_FILLED_BOX
+          || cursor_type == MC_HOLLOW_BOX
+          || (debug_p
+              && cursor_type == MC_HBAR)
+          || (debug_p
+              && cursor_type == MC_BAR)))
+    {
+      /* `cursor_gc_p` is used only by `w32term.c` and `xterm.c'. */
+      bool cursor_gc_p = false;
+      const Emacs_Rectangle *saved_clip = NULL;
+      if (row->clip != NULL)
+        {
+          saved_clip = row->clip;
+          row->clip = NULL;
+        }
+      mc_draw_cursor_glyph (w, matrix, row, DRAW_CURSOR, x, hpos, vpos, lsl,
+                            glyph_flavor, cursor_type, wd, active_p, cursor_gc_p);
+      if (saved_clip != NULL)
+        row->clip = saved_clip;
+    }
+#ifdef NS_IMPL_COCOA
+  NSEnableScreenUpdates ();
+#endif
+}
+
+static void
+mc_ns_draw_text_decoration (struct glyph_string *s, struct face *face,
+                         NSColor *defaultCol, CGFloat width, CGFloat x)
+/* --------------------------------------------------------------------------
+   Draw underline, overline, and strike-through on glyph string s.
+   -------------------------------------------------------------------------- */
+{
+  if (s->for_overlaps)
+    return;
+  /* Do underline. */
+  if (face->underline_p)
+    {
+      if (s->face->underline_type == FACE_UNDER_WAVE)
+        {
+          if (face->underline_defaulted_p)
+            [defaultCol set];
+            else
+              [ns_lookup_indexed_color (face->underline_color, s->f) set];
+          ns_draw_underwave (s, width, x);
+        }
+        else if (s->face->underline_type == FACE_UNDER_LINE)
+          {
+            NSRect r;
+            unsigned long thickness, position;
+            /* If the prev was underlined, match its appearance. */
+            if (s->prev && s->prev->face->underline_p
+                && s->prev->face->underline_type == FACE_UNDER_LINE
+                && s->prev->underline_thickness > 0)
+              {
+                thickness = s->prev->underline_thickness;
+                position = s->prev->underline_position;
+              }
+              else
+                {
+                  struct font *font;
+                  unsigned long descent;
+                  font=s->font;
+                  descent = s->y + s->height - s->ybase;
+                  /* Use underline thickness of font, defaulting to 1. */
+                  thickness = (font && font->underline_thickness > 0)
+                              ? font->underline_thickness
+                              : 1;
+                  /* Determine the offset of underlining from the baseline. */
+                  if (x_underline_at_descent_line)
+                    position = descent - thickness;
+                    else if (x_use_underline_position_properties
+                             && font && font->underline_position >= 0)
+                      position = font->underline_position;
+                      else if (font)
+                        position = lround (font->descent / 2);
+                        else
+                          position = underline_minimum_offset;
+                  position = max (position, underline_minimum_offset);
+                  /* Ensure underlining is not cropped. */
+                  if (descent <= position)
+                    {
+                      position = descent - 1;
+                      thickness = 1;
+                    }
+                    else if (descent < position + thickness)
+                      thickness = 1;
+                }
+            s->underline_thickness = thickness;
+            s->underline_position = position;
+            r = NSMakeRect (x, s->ybase + position, width, thickness);
+            if (face->underline_defaulted_p)
+              [defaultCol set];
+              else
+                [ns_lookup_indexed_color (face->underline_color, s->f) set];
+            NSRectFill (r);
+          }
+    }
+  /* Do overline. We follow other terms in using a thickness of 1
+     and ignoring overline_margin. */
+  if (face->overline_p)
+    {
+      NSRect r;
+      r = NSMakeRect (x, s->y, width, 1);
+      if (face->overline_color_defaulted_p)
+        [defaultCol set];
+        else
+          [ns_lookup_indexed_color (face->overline_color, s->f) set];
+      NSRectFill (r);
+    }
+  /* Do strike-through.  We follow other terms for thickness and
+     vertical position.*/
+  if (face->strike_through_p)
+    {
+      NSRect r;
+      unsigned long dy;
+      dy = lrint ((s->height - 1) / 2);
+      r = NSMakeRect (x, s->y + dy, width, 1);
+      if (face->strike_through_color_defaulted_p)
+        [defaultCol set];
+        else
+          [ns_lookup_indexed_color (face->strike_through_color, s->f) set];
+      NSRectFill (r);
+    }
+}
+
+static void
+mc_ns_dumpglyphs_stretch (struct glyph_string *s, struct glyph_matrix *matrix,
+                          struct glyph_row *row, struct mc_matrix mc_matrix,
+                          int wd)
+{
+  NSRect r[2];
+  int n, i;
+  struct face *face;
+  NSColor *fgCol, *bgCol;
+  if (!s->background_filled_p)
+    {
+      n = ns_get_glyph_string_clip_rect (s, r);
+      if (!ns_clip_to_rect (s->f, r, n))
+        return;
+      *r = NSMakeRect (s->x, s->y, s->background_width, s->height);
+      if (s->hl == DRAW_MOUSE_FACE)
+        {
+          face = FACE_FROM_ID (s->f, MOUSE_HL_INFO (s->f)->mouse_face_face_id);
+          if (!face)
+            face = FACE_FROM_ID (s->f, MOUSE_FACE_ID);
+        }
+        else
+         face = FACE_FROM_ID (s->f, s->first_glyph->face_id);
+      bgCol = ns_lookup_indexed_color (NS_FACE_BACKGROUND (face), s->f);
+      fgCol = ns_lookup_indexed_color (NS_FACE_FOREGROUND (face), s->f);
+      for (i = 0; i < n; ++i)
+        {
+          if (!s->row->full_width_p)
+            {
+              int overrun, leftoverrun;
+              /* truncate to avoid overwriting fringe and/or scrollbar */
+              overrun = max (0, (s->x + s->background_width)
+                                 - (WINDOW_BOX_RIGHT_EDGE_X (s->w)
+                              - WINDOW_RIGHT_FRINGE_WIDTH (s->w)));
+                    r[i].size.width -= overrun;
+              /* truncate to avoid overwriting to left of the window box */
+              leftoverrun = (WINDOW_BOX_LEFT_EDGE_X (s->w)
+                             + WINDOW_LEFT_FRINGE_WIDTH (s->w)) - s->x;
+              if (leftoverrun > 0)
+                {
+                  r[i].origin.x += leftoverrun;
+                  r[i].size.width -= leftoverrun;
+                }
+            }
+          [bgCol set];
+          /* NOTE: under NS this is NOT used to draw cursors, but we must avoid
+             overwriting cursor (usually when cursor on a tab) */
+          if (s->hl == DRAW_CURSOR)
+            {
+              /* FIXME:  Do we still need to prevent this section of code from
+              erasing the fake MC_HBAR that extends the entire length of the
+              STRETCH_GLYPH?  This may have been done prior to the fix relating
+              to left/right overwritten glyphs. */
+              r[i].size.height -= 1;
+              //  enum face_id debugging_face_id = lookup_named_face (s->w, s->f, intern ("+-debugging-face"), true);
+              //  struct face *debugging_face = FACE_FROM_ID (s->f, debugging_face_id);
+              //  NSColor *color = ns_lookup_indexed_color (NS_FACE_FOREGROUND (debugging_face), s->f);
+              //  [color set];
+              CGFloat x = r[i].origin.x;
+              CGFloat width = wd;
+              r[i].size.width -= width;
+              r[i].origin.x += width;
+              NSRectFill (r[i]);
+              /* Draw overlining, etc. on the cursor. */
+              if (s->w->phys_cursor_type == MC_FILLED_BOX)
+                mc_ns_draw_text_decoration (s, face, bgCol, width, x);
+                else
+                  mc_ns_draw_text_decoration (s, face, fgCol, width, x);
+            }
+          else
+            {
+  //  int rx = r[i].origin.x;
+  //  int ry = r[i].origin.y;
+  //  int rw = r[i].size.width;
+  //  int rh = r[i].size.height;
+  //  fprintf (stderr, "mc_ns_dumpglyphs_stretch:  vpos (%d) | rx (%d) | ry (%d) | rw (%d) | rh (%d)\n",
+  //                   s->first_glyph->vpos, rx, ry, rw, rh);
+              NSRectFill (r[i]);
+            }
+          /* Draw overlining, etc. on the stretch glyph (or the part
+             of the stretch glyph after the cursor). */
+          mc_ns_draw_text_decoration (s, face, fgCol, r[i].size.width,
+                                      r[i].origin.x);
+        }
+      if ((s->left_overwritten_p || s->right_overwritten_p)
+          && (s->action_type == MC_DRAW_GLYPH_STRING || s->action_type == MC_ERASE_GLYPH_STRING))
+        mc_ns_draw_overwritten (s, matrix, row, mc_matrix, s->first_glyph);
+      ns_reset_clipping (s->f);
+      s->background_filled_p = 1;
+    }
+}
+
+static void
+mc_ns_dumpglyphs_image (struct glyph_string *s, NSRect r, struct mc_RGB lsl,
+                        enum mc_flavor glyph_flavor, enum mc_cursor_type cursor_type,
+                        bool active_p)
+/* --------------------------------------------------------------------------
+      Renders an image and associated borders.
+   -------------------------------------------------------------------------- */
+{
+  EmacsImage *img = s->img->pixmap;
+  int box_line_vwidth = max (s->face->box_line_width, 0);
+  int x = s->x, y = s->ybase - image_ascent (s->img, s->face, &s->slice);
+  int bg_x, bg_y, bg_height;
+  int th;
+  char raised_p;
+  NSRect br;
+  struct face *face;
+  NSColor *tdCol;
+  NSTRACE ("mc_ns_dumpglyphs_image");
+  if (s->face->box != FACE_NO_BOX
+      && s->first_glyph->left_box_line_p && s->slice.x == 0)
+    x += abs (s->face->box_line_width);
+  bg_x = x;
+  bg_y =  s->slice.y == 0 ? s->y : s->y + box_line_vwidth;
+  bg_height = s->height;
+  /* other terms have this, but was causing problems w/tabbar mode */
+  /* - 2 * box_line_vwidth; */
+  if (s->slice.x == 0) x += s->img->hmargin;
+  if (s->slice.y == 0) y += s->img->vmargin;
+  /* Draw BG: if we need larger area than image itself cleared, do that,
+     otherwise, since we composite the image under NS (instead of mucking
+     with its background color), we must clear just the image area. */
+  if (s->hl == DRAW_MOUSE_FACE)
+    {
+      face = FACE_FROM_ID (s->f, MOUSE_HL_INFO (s->f)->mouse_face_face_id);
+      if (!face)
+        face = FACE_FROM_ID (s->f, MOUSE_FACE_ID);
+    }
+  else
+    face = FACE_FROM_ID (s->f, s->first_glyph->face_id);
+  [ns_lookup_indexed_color (NS_FACE_BACKGROUND (face), s->f) set];
+  if (bg_height > s->slice.height || s->img->hmargin || s->img->vmargin
+      || s->img->mask || s->img->pixmap == 0 || s->width != s->background_width)
+    {
+      br = NSMakeRect (bg_x, bg_y, s->background_width, bg_height);
+      s->background_filled_p = 1;
+    }
+    else
+      br = NSMakeRect (x, y, s->slice.width, s->slice.height);
+  NSRectFill (br);
+  /* Draw the image.. do we need to draw placeholder if img ==nil? */
+  if (img != nil)
+    {
+#ifdef NS_IMPL_COCOA
+      NSRect dr = NSMakeRect (x, y, s->slice.width, s->slice.height);
+      NSRect ir = NSMakeRect (s->slice.x, s->slice.y,
+                              s->slice.width, s->slice.height);
+      [img drawInRect: dr
+             fromRect: ir
+             operation: NSCompositeSourceOver
+              fraction: 1.0
+           respectFlipped: YES
+                hints: nil];
+#else
+      [img compositeToPoint: NSMakePoint (x, y + s->slice.height)
+                  operation: NSCompositeSourceOver];
+#endif
+    }
+  if (s->hl == DRAW_CURSOR)
+    {
+      [FRAME_CURSOR_COLOR (s->f) set];
+      if (s->w->phys_cursor_type == MC_FILLED_BOX)
+        tdCol = ns_lookup_indexed_color (NS_FACE_BACKGROUND (face), s->f);
+        else
+          /* Currently on NS img->mask is always 0. Since
+             get_window_cursor_type specifies a hollow box cursor when on
+             a non-masked image we never reach this clause. But we put it
+             in in anticipation of better support for image masks on NS. */
+          tdCol = ns_lookup_indexed_color (NS_FACE_FOREGROUND (face), s->f);
+    }
+    else
+      tdCol = ns_lookup_indexed_color (NS_FACE_FOREGROUND (face), s->f);
+  /* Draw underline, overline, strike-through. */
+  mc_ns_draw_text_decoration (s, face, tdCol, br.size.width, br.origin.x);
+  /* Draw relief, if requested */
+  if (s->img->relief || s->hl ==DRAW_IMAGE_RAISED || s->hl ==DRAW_IMAGE_SUNKEN)
+    {
+      if (s->hl == DRAW_IMAGE_SUNKEN || s->hl == DRAW_IMAGE_RAISED)
+        {
+          th = tool_bar_button_relief >= 0 ?
+            tool_bar_button_relief : DEFAULT_TOOL_BAR_BUTTON_RELIEF;
+          raised_p = (s->hl == DRAW_IMAGE_RAISED);
+        }
+        else
+          {
+            th = abs (s->img->relief);
+            raised_p = (s->img->relief > 0);
+          }
+      r.origin.x = x - th;
+      r.origin.y = y - th;
+      r.size.width = s->slice.width + 2*th-1;
+      r.size.height = s->slice.height + 2*th-1;
+      ns_draw_relief (r, th, raised_p,
+                      s->slice.y == 0,
+                      s->slice.y + s->slice.height == s->img->height,
+                      s->slice.x == 0,
+                      s->slice.x + s->slice.width == s->img->width, s);
+    }
+  /* If there is no mask, the background won't be seen,
+     so draw a rectangle on the image for the cursor.
+     Do this for all images, getting transparency right is not reliable. */
+  if (s->hl == DRAW_CURSOR)
+    {
+      int thickness = abs (s->img->relief);
+      if (thickness == 0) thickness = 1;
+    if (glyph_flavor == MC_GLYPH
+        || glyph_flavor == MC_GLYPHLESS)
+      {
+        NSColor *border_color = [NSColor colorWithCalibratedRed: lsl.red
+                                                          green: lsl.green
+                                                           blue: lsl.blue
+                                                          alpha: 1.0];
+        ns_draw_box (br, thickness, border_color, 1, 1);
+      }
+      else
+        ns_draw_box (br, thickness, FRAME_CURSOR_COLOR (s->f), 1, 1);
+    }
+}
+
+static void
+mc_ns_maybe_dumpglyphs_background (struct glyph_string *s, char force_p)
+{
+  NSTRACE ("mc_ns_maybe_dumpglyphs_background");
+  if (!s->background_filled_p/* || s->hl == DRAW_MOUSE_FACE*/)
+    {
+      int box_line_width = max (s->face->box_line_width, 0);
+      if (FONT_HEIGHT (s->font) < s->height - 2 * box_line_width
+          /* When xdisp.c ignores FONT_HEIGHT, we cannot trust font
+             dimensions, since the actual glyphs might be much
+             smaller.  So in that case we always clear the rectangle
+             with background color. */
+          || FONT_TOO_HIGH (s->font)
+          || s->font_not_found_p || s->extends_to_end_of_line_p || force_p)
+        {
+          struct face *face;
+          if (s->hl == DRAW_MOUSE_FACE)
+            {
+              face = FACE_FROM_ID (s->f, MOUSE_HL_INFO (s->f)->mouse_face_face_id);
+              if (!face)
+                face = FACE_FROM_ID (s->f, MOUSE_FACE_ID);
+            }
+            else
+              face = FACE_FROM_ID (s->f, s->first_glyph->face_id);
+          if (!face->stipple)
+            [(NS_FACE_BACKGROUND (face) != 0
+              ? ns_lookup_indexed_color (NS_FACE_BACKGROUND (face), s->f)
+              : FRAME_BACKGROUND_COLOR (s->f)) set];
+            else
+              {
+                struct ns_display_info *dpyinfo = FRAME_DISPLAY_INFO (s->f);
+                [[dpyinfo->bitmaps[face->stipple-1].img stippleMask] set];
+              }
+          if (s->hl != DRAW_CURSOR)
+            {
+              s->rectangle_nuked_p = true;
+              NSRect r = NSMakeRect (s->x, s->y + box_line_width,
+                                    s->background_width,
+                                    s->height-2*box_line_width);
+              NSRectFill (r);
+            }
+          s->background_filled_p = 1;
+        }
+    }
+}
+
+static void
+mc_ns_draw_glyph_string (struct glyph_string *s, struct glyph_matrix *matrix,
+                         struct glyph_row *row, struct mc_matrix mc_matrix,
+                         struct mc_RGB lsl, enum mc_flavor glyph_flavor,
+                         enum mc_cursor_type cursor_type, int wd, bool active_p,
+                         bool cursor_gc_p)
+/* --------------------------------------------------------------------------
+      External (RIF): Main draw-text call.
+   -------------------------------------------------------------------------- */
+{
+  NSRect r[2];
+  int n;
+  char box_drawn_p = 0;
+  struct font *font = s->face->font;
+  if (!font)
+    font = FRAME_FONT (s->f);
+  NSTRACE_WHEN (NSTRACE_GROUP_GLYPHS, "mc_ns_draw_glyph_string");
+  if (s->next && s->right_overhang && !s->for_overlaps)
+    {
+      int width;
+      struct glyph_string *next;
+      for (width = 0, next = s->next;
+           next && width < s->right_overhang;
+           width += next->width, next = next->next)
+        if (next->first_glyph->type != IMAGE_GLYPH)
+          {
+            if (next->first_glyph->type != STRETCH_GLYPH)
+              {
+                n = ns_get_glyph_string_clip_rect (s->next, r);
+                if (!ns_clip_to_rect (s->f, r, n))
+                  return;
+                mc_ns_maybe_dumpglyphs_background (s->next, 1);
+                ns_reset_clipping (s->f);
+              }
+              else
+                mc_ns_dumpglyphs_stretch (s->next, matrix, row, mc_matrix, wd);
+            next->num_clips = 0;
+          }
+    }
+  if (!s->for_overlaps && s->face->box != FACE_NO_BOX
+      && (s->first_glyph->type == CHAR_GLYPH
+          || s->first_glyph->type == COMPOSITE_GLYPH))
+    {
+      n = ns_get_glyph_string_clip_rect (s, r);
+      if (!ns_clip_to_rect (s->f, r, n))
+        return;
+      mc_ns_maybe_dumpglyphs_background (s, 1);
+      ns_dumpglyphs_box_or_relief (s);
+      ns_reset_clipping (s->f);
+      box_drawn_p = 1;
+    }
+  switch (s->first_glyph->type)
+    {
+    case IMAGE_GLYPH:
+      n = ns_get_glyph_string_clip_rect (s, r);
+      if (!ns_clip_to_rect (s->f, r, n))
+        return;
+      mc_ns_dumpglyphs_image (s, r[0], lsl, glyph_flavor, cursor_type, active_p);
+      ns_reset_clipping (s->f);
+      break;
+    case STRETCH_GLYPH:
+      mc_ns_dumpglyphs_stretch (s, matrix, row, mc_matrix, wd);
+      break;
+    case CHAR_GLYPH:
+    case COMPOSITE_GLYPH:
+      n = ns_get_glyph_string_clip_rect (s, r);
+      if (!ns_clip_to_rect (s->f, r, n))
+        return;
+      if (s->for_overlaps
+          || (s->cmp_from > 0
+              && ! s->first_glyph->u.cmp.automatic))
+        s->background_filled_p = 1;
+        else
+          mc_ns_maybe_dumpglyphs_background (s, s->first_glyph->type == COMPOSITE_GLYPH);
+      int flags = (s->hl == DRAW_CURSOR)
+                    ? NS_DUMPGLYPH_CURSOR
+                  : (s->hl == DRAW_MOUSE_FACE)
+                    ? NS_DUMPGLYPH_MOUSEFACE
+                  : (s->for_overlaps)
+                    ? NS_DUMPGLYPH_FOREGROUND
+                  : NS_DUMPGLYPH_NORMAL;
+      unsigned long saved_fg = NS_FACE_FOREGROUND (s->face);
+      if (s->hl == DRAW_CURSOR && cursor_type == MC_FILLED_BOX)
+        {
+          unsigned long tmp = NS_FACE_BACKGROUND (s->face);
+          NS_FACE_BACKGROUND (s->face) = NS_FACE_FOREGROUND (s->face);
+          NS_FACE_FOREGROUND (s->face) = tmp;
+        }
+        else if (s->hl == DRAW_CURSOR
+                 && cursor_type == MC_FRAMED_BOX
+                 && active_p)
+          {
+            enum face_id hollow_active_face_id =
+              lookup_named_face (s->w, s->f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+            struct face *hollow_active_face = FACE_FROM_ID (s->f, hollow_active_face_id);
+            NS_FACE_FOREGROUND (s->face) = NS_FACE_FOREGROUND (hollow_active_face);
+          }
+          else if (s->hl == DRAW_CURSOR
+                   && cursor_type == MC_FRAMED_BOX
+                   && active_p)
+            {
+              enum face_id hollow_inactive_face_id =
+                lookup_named_face (s->w, s->f, intern ("+-real-fake-cursor-inactive-pre-zv-face"), true);
+              struct face *hollow_inactive_face = FACE_FROM_ID (s->f, hollow_inactive_face_id);
+              NS_FACE_FOREGROUND (s->face) = NS_FACE_FOREGROUND (hollow_inactive_face);
+            }
+      if (s->first_glyph->type == COMPOSITE_GLYPH)
+        ns_draw_composite_glyph_string_foreground (s);
+        else
+          {
+            bool with_bg_p = ((flags == NS_DUMPGLYPH_NORMAL && !s->background_filled_p)
+                              || flags == NS_DUMPGLYPH_MOUSEFACE);
+            if (with_bg_p)
+              s->background_nuked_p = true;
+            font->driver->draw (s, s->cmp_from, s->nchars, s->x, s->ybase, with_bg_p);
+          }
+      NSColor *col = (NS_FACE_FOREGROUND (s->face) != 0
+                     ? ns_lookup_indexed_color (NS_FACE_FOREGROUND (s->face), s->f)
+                     : FRAME_FOREGROUND_COLOR (s->f));
+      [col set];
+      /* Draw underline, overline, strike-through. */
+      mc_ns_draw_text_decoration (s, s->face, col, s->width, s->x);
+      if (s->first_glyph->type != COMPOSITE_GLYPH
+          && (s->left_overwritten_p || s->right_overwritten_p)
+          && (s->background_nuked_p || s->rectangle_nuked_p)
+          && (s->action_type == MC_DRAW_GLYPH_STRING || s->action_type == MC_ERASE_GLYPH_STRING))
+        mc_ns_draw_overwritten (s, matrix, row, mc_matrix, s->first_glyph);
+      if (s->hl == DRAW_CURSOR
+          && cursor_type == MC_FILLED_BOX)
+        {
+          unsigned long tmp = NS_FACE_BACKGROUND (s->face);
+          NS_FACE_BACKGROUND (s->face) = NS_FACE_FOREGROUND (s->face);
+          NS_FACE_FOREGROUND (s->face) = tmp;
+        }
+        else if (s->hl == DRAW_CURSOR
+                 && cursor_type == MC_FRAMED_BOX)
+          NS_FACE_FOREGROUND (s->face) = saved_fg;
+      ns_reset_clipping (s->f);
+      break;
+    case GLYPHLESS_GLYPH:
+      n = ns_get_glyph_string_clip_rect (s, r);
+      if (!ns_clip_to_rect (s->f, r, n))
+        return;
+      if (s->for_overlaps
+          || (s->cmp_from > 0
+              && ! s->first_glyph->u.cmp.automatic))
+        s->background_filled_p = 1;
+      else
+        mc_ns_maybe_dumpglyphs_background (s, s->first_glyph->type == COMPOSITE_GLYPH);
+      ns_reset_clipping (s->f);
+      break;
+    default:
+      emacs_abort ();
+    }
+  /* Draw box if not done already. */
+  if (!s->for_overlaps
+      && !box_drawn_p
+      && s->face->box != FACE_NO_BOX)
+    {
+      n = ns_get_glyph_string_clip_rect (s, r);
+      if (!ns_clip_to_rect (s->f, r, n))
+        return;
+      ns_dumpglyphs_box_or_relief (s);
+      ns_reset_clipping (s->f);
+    }
+  s->num_clips = 0;
+}
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 /* ==========================================================================
 
    NSTRACE, Trace support.
@@ -1079,6 +2049,16 @@ ns_update_begin (struct frame *f)
    external (RIF) call; whole frame, called before gui_update_window_begin
    -------------------------------------------------------------------------- */
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  f->mc_updating_frame = f;
+
+/* *************************************************************************** */
+
+
 #ifdef NS_IMPL_COCOA
   EmacsView *view = FRAME_NS_VIEW (f);
 
@@ -1109,6 +2089,16 @@ ns_update_end (struct frame *f)
 
 /*   if (f == MOUSE_HL_INFO (f)->mouse_face_mouse_frame) */
   MOUSE_HL_INFO (f)->mouse_face_defer = 0;
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  f->mc_updating_frame = NULL;
+
+/* *************************************************************************** */
+
+
 }
 
 
@@ -4759,6 +5749,17 @@ ns_set_vertical_scroll_bar (struct window *window,
       bar = [[EmacsScroller alloc] initFrame: r window: win];
       wset_vertical_scroll_bar (window, make_mint_ptr (bar));
       update_p = YES;
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+      /* This is only for debugging purposes. */
+      [bar mc_set_rectangle: r];
+
+/* *************************************************************************** */
+
+
     }
   else
     {
@@ -4766,12 +5767,30 @@ ns_set_vertical_scroll_bar (struct window *window,
       bar = XNS_SCROLL_BAR (window->vertical_scroll_bar);
       oldRect = [bar frame];
       r.size.width = oldRect.size.width;
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
       if (FRAME_LIVE_P (f) && !NSEqualRects (oldRect, r))
         {
+          /* The main window has probably been resized.  Graciously delete the
+          old scroll bar without repainting its rectangle; and, create a new
+          scroll bar elsewhere.*/
           if (oldRect.origin.x != r.origin.x)
+            {
               ns_clear_frame_area (f, left, top, width, height);
+              [bar mc_judge];
+              bar = [[EmacsScroller alloc] initFrame: r window: win];
+              wset_vertical_scroll_bar (window, make_mint_ptr (bar));
+            }
+            else
           [bar setFrame: r];
         }
+
+/* *************************************************************************** */
+
+
     }
 
   if (update_p)
@@ -4931,8 +5950,56 @@ ns_judge_scroll_bars (struct frame *f)
     {
       view = [subviews objectAtIndex: i];
       if (![view isKindOfClass: [EmacsScroller class]]) continue;
-      if ([view judge])
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  /* `XSETWINDOW' will sometimes cause Emacs to crash when running under gdb even
+  though (w != NULL).  Therefore, we cannot reliably use `WINDOW_LIVE_P'. */
+  struct window *w = [view mc_get_window];
+  if (w != NULL
+      && NILP (w->contents))
+    {
+      BOOL debug_p = false;
+      if (debug_p
+          /* `window_box' calls `window_box_height', which will cause Emacs to
+          crash if FRAMEP (w->frame) is not satisfied. */
+          && FRAMEP (w->frame))
+        {
+          NSRect r0 = [view mc_get_rectangle];
+          int x0 = NSMinX (r0);
+          int y0 = NSMinY (r0);
+          int wd0 = NSWidth (r0);
+          int h0 = NSHeight (r0);
+          int window_y, window_height;
+          window_box (w, ANY_AREA, 0, &window_y, 0, &window_height);
+          int top = window_y;
+          int height = window_height;
+          int width = WINDOW_CONFIG_SCROLL_BAR_COLS (w) * FRAME_COLUMN_WIDTH (f);
+          int left = WINDOW_SCROLL_BAR_AREA_X (w);
+          NSRect r1 = NSMakeRect (left, top, width, height);
+          /* The parent view is flipped, so we need to flip y value. */
+          EmacsView *frame_view = FRAME_NS_VIEW (f);
+          NSRect v = [frame_view frame];
+          r1.origin.y = (v.size.height - r1.size.height - r1.origin.y);
+          int x1 = NSMinX (r1);
+          int y1 = NSMinY (r1);
+          int wd1 = NSWidth (r1);
+          int h1 = NSHeight (r1);
+          fprintf (stderr, "%s -- DEAD:\n\
+          x0/x1 (%d/%d) | y0/y1 (%d/%d) | wd0/wd1 (%d/%d) | h0/h1 (%d/%d)\n",
+          mc_window (w), x0, x1, y0, y1, wd0, wd1, h0, h1);
+        }
+      if ([view mc_judge])
         removed = YES;
+    }
+    else if ([view judge])
+      removed = YES;
+
+/* *************************************************************************** */
+
+
     }
 
   if (removed)
@@ -5074,6 +6141,20 @@ ns_initialize_display_info (struct ns_display_info *dpyinfo)
 extern frame_parm_handler ns_frame_parm_handlers[];
 static struct redisplay_interface ns_redisplay_interface =
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+/* `redisplay_interface' in `nsterm.m` must be in the exact same order as the
+`redisplay_interface' in `dispextern.h`! */
+
+  mc_ns_draw_window_cursor,
+  mc_ns_draw_glyph_string,
+
+/* *************************************************************************** */
+
+
   ns_frame_parm_handlers,
   gui_produce_glyphs,
   gui_write_glyphs,
@@ -8710,6 +9791,49 @@ not_in_argv (NSString *arg)
 
 
 @implementation EmacsScroller
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+- (void)mc_set_rectangle: (NSRect)rect
+{
+  mc_rectangle = rect;
+}
+
+- (NSRect)mc_get_rectangle
+{
+  return mc_rectangle;
+}
+
+- (struct window *)mc_get_window
+{
+  return window;
+}
+
+- (bool)mc_judge
+{
+  NSTRACE ("[EmacsScroller mc_judge]");
+  bool ret = condemned;
+  block_input ();
+  if (condemned)
+    {
+      /* ensure other scrollbar updates after deletion */
+      EmacsView *view = (EmacsView *)FRAME_NS_VIEW (frame);
+      if (view != nil)
+        view->scrollbarsNeedingUpdate++;
+    }
+  if (window)
+    wset_vertical_scroll_bar (window, Qnil);
+  window = 0;
+  [self removeFromSuperviewWithoutNeedingDisplay];
+  [self release];
+  unblock_input ();
+  return ret;
+}
+
+/* *************************************************************************** */
+
 
 /* for repeat button push */
 #define SCROLL_BAR_FIRST_DELAY 0.5

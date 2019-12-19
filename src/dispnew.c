@@ -56,6 +56,1782 @@ along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "w32.h"
 #endif
 
+
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+struct glyphs_skipped
+{
+  ptrdiff_t allocated;
+  ptrdiff_t used;
+  struct skipped_items
+    {
+      int x;
+      int hpos;
+      bool enabled_p;
+    } *skipped;
+} array_glyphs_skipped;
+
+struct mc_row_entry
+{
+  int old_uses, new_uses;
+  int new_line_number;
+  ptrdiff_t bucket;
+  struct glyph_row *row;
+  struct mc_row_entry *next;
+};
+static struct mc_row_entry *mc_row_entry_pool;
+static ptrdiff_t mc_row_entry_pool_size;
+static ptrdiff_t mc_row_entry_idx;
+static struct mc_row_entry **mc_row_table;
+static ptrdiff_t mc_row_table_size;
+static struct mc_row_entry **mc_old_lines, **mc_new_lines;
+static ptrdiff_t mc_old_lines_size, mc_new_lines_size;
+static struct run *mc_run_pool;
+static ptrdiff_t mc_runs_size;
+static struct run **mc_runs;
+
+static bool update_window_line (struct window *, int, bool *);
+
+static void update_marginal_area (struct window *, struct glyph_row *,
+                                  enum glyph_row_area, int);
+
+static void make_current (struct glyph_matrix *, struct glyph_matrix *, int);
+
+static bool row_equal_p (struct glyph_row *, struct glyph_row *, bool);
+
+static void assign_row (struct glyph_row *, struct glyph_row *);
+
+static bool
+mc_verify_row_hash (struct glyph_row *row)
+{
+  return row->hash == row_hash (row);
+}
+
+static struct mc_row_entry *
+mc_add_row_entry (struct glyph_row *row)
+{
+  struct mc_row_entry *entry;
+  ptrdiff_t i = row->hash % mc_row_table_size;
+  entry = mc_row_table[i];
+  eassert (entry || mc_verify_row_hash (row));
+  while (entry && !row_equal_p (entry->row, row, 1))
+    entry = entry->next;
+  if (entry == NULL)
+    {
+      entry = mc_row_entry_pool + mc_row_entry_idx++;
+      entry->row = row;
+      entry->old_uses = entry->new_uses = 0;
+      entry->new_line_number = 0;
+      entry->bucket = i;
+      entry->next = mc_row_table[i];
+      mc_row_table[i] = entry;
+    }
+  return entry;
+}
+
+struct mc_matrix
+mc_save_cache_matrix (struct mc_matrix matrix)
+{
+  struct mc_matrix saved;
+  saved.vpos_allocated = matrix.vpos_allocated;
+  saved.vpos_used = matrix.vpos_used;
+  saved.vpos = xzalloc (saved.vpos_allocated * sizeof *saved.vpos);
+  for (enum mc_cache_type cache_type = MC_CACHE;
+       cache_type < NO_CACHE;
+       ++cache_type)
+    saved.cursors_used[cache_type] = matrix.cursors_used[cache_type];
+  for (int vnth = 0; vnth < matrix.vpos_allocated; ++vnth)
+    {
+      for (enum mc_cache_type cache_type = MC_CACHE;
+           cache_type < NO_CACHE;
+           ++cache_type)
+        {
+          saved.vpos[vnth].cache_allocated[cache_type] = matrix.vpos[vnth].cache_allocated[cache_type];
+          saved.vpos[vnth].cache_used[cache_type] = matrix.vpos[vnth].cache_used[cache_type];
+          if (matrix.vpos[vnth].cache_used[cache_type])
+            {
+              ptrdiff_t nbytes = matrix.vpos[vnth].cache_used[cache_type] * sizeof (struct mc_contents);
+              saved.vpos[vnth].cache[cache_type] = xmalloc (nbytes);
+              memcpy (saved.vpos[vnth].cache[cache_type], matrix.vpos[vnth].cache[cache_type], nbytes);
+            }
+        }
+    }
+  return saved;
+}
+
+void
+mc_xfree_cache_matrix (struct window *w, struct mc_matrix *matrix)
+{
+  if (matrix->vpos == NULL)
+    return;
+  for (int vnth = 0; vnth < matrix->vpos_allocated; ++vnth)
+    {
+      for (enum mc_cache_type cache_type = MC_CACHE;
+           cache_type < NO_CACHE;
+           ++cache_type)
+        if (matrix->vpos[vnth].cache_allocated[cache_type] > 0)
+          {
+            xfree (matrix->vpos[vnth].cache[cache_type]);
+            matrix->vpos[vnth].cache[cache_type] = NULL;
+            matrix->vpos[vnth].cache_allocated[cache_type] = 0;
+            matrix->vpos[vnth].cache_used[cache_type] = 0;
+          }
+    }
+  xfree (matrix->vpos);
+  matrix->vpos = NULL;
+  matrix->vpos_allocated = 0;
+  matrix->vpos_used = 0;
+  for (enum mc_cache_type cache_type = MC_CACHE;
+       cache_type < NO_CACHE;
+       ++cache_type)
+    matrix->cursors_used[cache_type] = 0;
+}
+
+struct glyph_matrix *
+mc_save_glyph_matrix (struct glyph_matrix *matrix)
+{
+  struct glyph_matrix *saved = xzalloc (sizeof *saved);
+  // NOT_COPIED:  struct glyph_pool *pool;
+  saved->rows_allocated = matrix->rows_allocated;
+  saved->nrows = matrix->nrows;
+  saved->rows = xzalloc (saved->nrows * sizeof *saved->rows);
+  saved->matrix_x = matrix->matrix_x;
+  saved->matrix_y = matrix->matrix_y;
+  saved->matrix_w = matrix->matrix_w;
+  saved->matrix_h = matrix->matrix_h;
+  saved->window_pixel_left = matrix->window_pixel_left;
+  saved->window_pixel_top = matrix->window_pixel_top;
+  saved->window_height = matrix->window_height;
+  saved->window_width = matrix->window_width;
+  saved->window_vscroll = matrix->window_vscroll;
+  saved->left_margin_glyphs = matrix->left_margin_glyphs;
+  saved->right_margin_glyphs = matrix->right_margin_glyphs;
+  saved->no_scrolling_p = matrix->no_scrolling_p;
+  saved->header_line_p = matrix->header_line_p;
+#ifdef GLYPH_DEBUG
+  // saved->method = matrix->method;
+#endif
+  // NOT COPIED:  struct buffer *buffer;
+  saved->begv = matrix->begv;
+  saved->zv = matrix->zv;
+  for (int i = 0; i < saved->nrows; ++i)
+    {
+      struct glyph_row *from = matrix->rows + i;
+      struct glyph_row *to = saved->rows + i;
+      ptrdiff_t nbytes = from->used[TEXT_AREA] * sizeof (struct glyph);
+      to->glyphs[TEXT_AREA] = xmalloc (nbytes);
+      memcpy (to->glyphs[TEXT_AREA], from->glyphs[TEXT_AREA], nbytes);
+      to->used[TEXT_AREA] = from->used[TEXT_AREA];
+      to->hash = from->hash;
+      to->x = from->x;
+      to->y = from->y;
+      to->pixel_width = from->pixel_width;
+      to->ascent = from->ascent;
+      to->height = from->height;
+      to->phys_ascent = from->phys_ascent;
+      to->phys_height = from->phys_height;
+      to->visible_height = from->visible_height;
+      to->extra_line_spacing = from->extra_line_spacing;
+      to->start = from->start;
+      to->end = from->end;
+      to->minpos = from->minpos;
+      to->maxpos = from->maxpos;
+      to->overlay_arrow_bitmap = from->overlay_arrow_bitmap;
+      to->left_user_fringe_bitmap = from->left_user_fringe_bitmap;
+      to->right_user_fringe_bitmap = from->right_user_fringe_bitmap;
+      to->left_fringe_bitmap = from->left_fringe_bitmap;
+      to->right_fringe_bitmap = from->right_fringe_bitmap;
+      to->left_user_fringe_face_id = from->left_user_fringe_face_id;
+      to->right_user_fringe_face_id = from->right_user_fringe_face_id;
+      to->left_fringe_face_id = from->left_fringe_face_id;
+      to->right_fringe_face_id = from->right_fringe_face_id;
+      to->left_fringe_offset = from->left_fringe_offset;
+      to->right_fringe_offset = from->right_fringe_offset;
+      to->fringe_bitmap_periodic_p = from->fringe_bitmap_periodic_p;
+      to->redraw_fringe_bitmaps_p = from->redraw_fringe_bitmaps_p;
+      to->enabled_p = from->enabled_p;
+      to->truncated_on_left_p = from->truncated_on_left_p;
+      to->truncated_on_right_p = from->truncated_on_right_p;
+      to->continued_p = from->continued_p;
+      to->displays_text_p = from->displays_text_p;
+      to->ends_at_zv_p = from->ends_at_zv_p;
+      to->fill_line_p = from->fill_line_p;
+      to->indicate_empty_line_p = from->indicate_empty_line_p;
+      to->contains_overlapping_glyphs_p = from->contains_overlapping_glyphs_p;
+      to->full_width_p = from->full_width_p;
+      to->mode_line_p = from->mode_line_p;
+      to->overlapped_p = from->overlapped_p;
+      to->ends_in_middle_of_char_p = from->ends_in_middle_of_char_p;
+      to->starts_in_middle_of_char_p = from->starts_in_middle_of_char_p;
+      to->overlapping_p = from->overlapping_p;
+      to->mouse_face_p = from->mouse_face_p;
+      to->ends_in_newline_from_string_p = from->ends_in_newline_from_string_p;
+      to->exact_window_width_line_p = from->exact_window_width_line_p;
+      to->cursor_in_fringe_p = from->cursor_in_fringe_p;
+      to->ends_in_ellipsis_p = from->ends_in_ellipsis_p;
+      to->indicate_bob_p = from->indicate_bob_p;
+      to->indicate_top_line_p = from->indicate_top_line_p;
+      to->indicate_eob_p = from->indicate_eob_p;
+      to->indicate_bottom_line_p = from->indicate_bottom_line_p;
+      to->reversed_p = from->reversed_p;
+      to->continuation_lines_width = from->continuation_lines_width;
+      to->clip = from->clip;
+      if (from->used[LEFT_MARGIN_AREA])
+        {
+          nbytes = from->used[LEFT_MARGIN_AREA] * sizeof (struct glyph);
+          to->glyphs[LEFT_MARGIN_AREA] = xmalloc (nbytes);
+          memcpy (to->glyphs[LEFT_MARGIN_AREA], from->glyphs[LEFT_MARGIN_AREA], nbytes);
+          to->used[LEFT_MARGIN_AREA] = from->used[LEFT_MARGIN_AREA];
+        }
+      if (from->used[RIGHT_MARGIN_AREA])
+        {
+          nbytes = from->used[RIGHT_MARGIN_AREA] * sizeof (struct glyph);
+          to->glyphs[RIGHT_MARGIN_AREA] = xmalloc (nbytes);
+          memcpy (to->glyphs[RIGHT_MARGIN_AREA], from->glyphs[RIGHT_MARGIN_AREA], nbytes);
+          to->used[RIGHT_MARGIN_AREA] = from->used[RIGHT_MARGIN_AREA];
+        }
+    }
+  return saved;
+}
+
+void
+mc_restore_glyph_matrix (struct glyph_matrix *saved, struct glyph_matrix *matrix)
+{
+  /* NOTE:  Assumes the matrix being restored already exists. */
+  // NOT RESTORED:  struct glyph_pool *pool;
+  matrix->rows_allocated = saved->rows_allocated;
+  matrix->nrows = saved->nrows;
+  matrix->matrix_x = saved->matrix_x;
+  matrix->matrix_y = saved->matrix_y;
+  matrix->matrix_w = saved->matrix_w;
+  matrix->matrix_h = saved->matrix_h;
+  matrix->window_pixel_left = saved->window_pixel_left;
+  matrix->window_pixel_top = saved->window_pixel_top;
+  matrix->window_height = saved->window_height;
+  matrix->window_width = saved->window_width;
+  matrix->window_vscroll = saved->window_vscroll;
+  matrix->left_margin_glyphs = saved->left_margin_glyphs;
+  matrix->right_margin_glyphs = saved->right_margin_glyphs;
+  matrix->no_scrolling_p = saved->no_scrolling_p;
+  matrix->header_line_p = saved->header_line_p;
+#ifdef GLYPH_DEBUG
+  // matrix->method = saved->method;
+#endif
+  // NOT RESTORED:  struct buffer *buffer;
+  matrix->begv = saved->begv;
+  matrix->zv = saved->zv;
+  for (int i = 0; i < saved->nrows; ++i)
+    {
+      struct glyph_row *from = saved->rows + i;
+      struct glyph_row *to = matrix->rows + i;
+      ptrdiff_t nbytes = from->used[TEXT_AREA] * sizeof (struct glyph);
+      memcpy (to->glyphs[TEXT_AREA], from->glyphs[TEXT_AREA], nbytes);
+      to->used[TEXT_AREA] = from->used[TEXT_AREA];
+      to->hash = from->hash;
+      to->x = from->x;
+      to->y = from->y;
+      to->pixel_width = from->pixel_width;
+      to->ascent = from->ascent;
+      to->height = from->height;
+      to->phys_ascent = from->phys_ascent;
+      to->phys_height = from->phys_height;
+      to->visible_height = from->visible_height;
+      to->extra_line_spacing = from->extra_line_spacing;
+      to->start = from->start;
+      to->end = from->end;
+      to->minpos = from->minpos;
+      to->maxpos = from->maxpos;
+      to->overlay_arrow_bitmap = from->overlay_arrow_bitmap;
+      to->left_user_fringe_bitmap = from->left_user_fringe_bitmap;
+      to->right_user_fringe_bitmap = from->right_user_fringe_bitmap;
+      to->left_fringe_bitmap = from->left_fringe_bitmap;
+      to->right_fringe_bitmap = from->right_fringe_bitmap;
+      to->left_user_fringe_face_id = from->left_user_fringe_face_id;
+      to->right_user_fringe_face_id = from->right_user_fringe_face_id;
+      to->left_fringe_face_id = from->left_fringe_face_id;
+      to->right_fringe_face_id = from->right_fringe_face_id;
+      to->left_fringe_offset = from->left_fringe_offset;
+      to->right_fringe_offset = from->right_fringe_offset;
+      to->fringe_bitmap_periodic_p = from->fringe_bitmap_periodic_p;
+      to->redraw_fringe_bitmaps_p = from->redraw_fringe_bitmaps_p;
+      to->enabled_p = from->enabled_p;
+      to->truncated_on_left_p = from->truncated_on_left_p;
+      to->truncated_on_right_p = from->truncated_on_right_p;
+      to->continued_p = from->continued_p;
+      to->displays_text_p = from->displays_text_p;
+      to->ends_at_zv_p = from->ends_at_zv_p;
+      to->fill_line_p = from->fill_line_p;
+      to->indicate_empty_line_p = from->indicate_empty_line_p;
+      to->contains_overlapping_glyphs_p = from->contains_overlapping_glyphs_p;
+      to->full_width_p = from->full_width_p;
+      to->mode_line_p = from->mode_line_p;
+      to->overlapped_p = from->overlapped_p;
+      to->ends_in_middle_of_char_p = from->ends_in_middle_of_char_p;
+      to->starts_in_middle_of_char_p = from->starts_in_middle_of_char_p;
+      to->overlapping_p = from->overlapping_p;
+      to->mouse_face_p = from->mouse_face_p;
+      to->ends_in_newline_from_string_p = from->ends_in_newline_from_string_p;
+      to->exact_window_width_line_p = from->exact_window_width_line_p;
+      to->cursor_in_fringe_p = from->cursor_in_fringe_p;
+      to->ends_in_ellipsis_p = from->ends_in_ellipsis_p;
+      to->indicate_bob_p = from->indicate_bob_p;
+      to->indicate_top_line_p = from->indicate_top_line_p;
+      to->indicate_eob_p = from->indicate_eob_p;
+      to->indicate_bottom_line_p = from->indicate_bottom_line_p;
+      to->reversed_p = from->reversed_p;
+      to->continuation_lines_width = from->continuation_lines_width;
+      to->clip = from->clip;
+      xfree (from->glyphs[TEXT_AREA]);
+      nbytes = from->used[LEFT_MARGIN_AREA] * sizeof (struct glyph);
+      if (nbytes)
+        {
+          memcpy (to->glyphs[LEFT_MARGIN_AREA], from->glyphs[LEFT_MARGIN_AREA], nbytes);
+          to->used[LEFT_MARGIN_AREA] = from->used[LEFT_MARGIN_AREA];
+          xfree (from->glyphs[LEFT_MARGIN_AREA]);
+        }
+      else
+        to->used[LEFT_MARGIN_AREA] = 0;
+      nbytes = from->used[RIGHT_MARGIN_AREA] * sizeof (struct glyph);
+      if (nbytes)
+        {
+          memcpy (to->glyphs[RIGHT_MARGIN_AREA], from->glyphs[RIGHT_MARGIN_AREA], nbytes);
+          to->used[RIGHT_MARGIN_AREA] = from->used[RIGHT_MARGIN_AREA];
+          xfree (from->glyphs[RIGHT_MARGIN_AREA]);
+        }
+      else
+        to->used[RIGHT_MARGIN_AREA] = 0;
+    }
+  xfree (saved->rows);
+  xfree (saved);
+}
+
+void
+mc_xfree_glyph_matrix (struct glyph_matrix *matrix)
+{
+  for (int i = 0; i < matrix->nrows; ++i)
+    {
+      ptrdiff_t nbytes;
+      struct glyph_row *row = matrix->rows + i;
+      nbytes = row->used[TEXT_AREA] * sizeof (struct glyph);
+      if (nbytes)
+        xfree (row->glyphs[TEXT_AREA]);
+      nbytes = row->used[LEFT_MARGIN_AREA] * sizeof (struct glyph);
+      if (nbytes)
+        xfree (row->glyphs[LEFT_MARGIN_AREA]);
+      nbytes = row->used[RIGHT_MARGIN_AREA] * sizeof (struct glyph);
+      if (nbytes)
+        xfree (row->glyphs[RIGHT_MARGIN_AREA]);
+    }
+  xfree (matrix->rows);
+  xfree (matrix);
+}
+
+/* Try to reuse part of the current display of W by scrolling lines.
+   HEADER_LINE_P means W has a header line.
+   . The algorithm is taken from Communications of the ACM, Apr78 "A Technique
+     for Isolating Differences Between Files."  It should take O(N) time.
+   A short outline of the steps of the algorithm:
+     1. Skip lines equal at the start and end of both matrices.
+     2. Enter rows in the current and desired matrix into a symbol table,
+        counting how often they appear in both matrices.
+     3. Rows that appear exactly once in both matrices serve as anchors, i.e. we
+        assume that such lines are likely to have been moved.
+     4. Starting from anchor lines, extend regions to be scrolled both forward
+        and backward.
+   Value is
+     -1 if all rows were found to be equal.
+     0 to indicate that we did not scroll the display, or
+     1 if we did scroll. */
+static int
+mc_scrolling_window (struct window *w, bool header_line_p)
+{
+  struct glyph_matrix *desired_matrix = w->desired_matrix;
+  struct glyph_matrix *current_matrix = w->current_matrix;
+  int yb = window_text_bottom_y (w);
+  ptrdiff_t i;
+  int j, first_old, first_new, last_old, last_new;
+  int nruns, run_idx;
+  ptrdiff_t n;
+  struct mc_row_entry *entry;
+  // struct redisplay_interface *rif = FRAME_RIF (XFRAME (WINDOW_FRAME (w)));
+  /* Skip over rows equal at the start. */
+  for (i = header_line_p; i < current_matrix->nrows - 1; ++i)
+    {
+      struct glyph_row *d = MATRIX_ROW (desired_matrix, i);
+      struct glyph_row *c = MATRIX_ROW (current_matrix, i);
+      if (c->enabled_p
+          && d->enabled_p
+          && !d->redraw_fringe_bitmaps_p
+          && c->y == d->y
+          && MATRIX_ROW_BOTTOM_Y (c) <= yb
+          && MATRIX_ROW_BOTTOM_Y (d) <= yb
+          && row_equal_p (c, d, 1))
+        {
+          assign_row (c, d);
+          d->enabled_p = false;
+        }
+        else
+          break;
+    }
+#ifdef HAVE_XWIDGETS
+  /* Currently this seems needed to detect xwidget movement reliably. */
+    return 0;
+#endif
+  /* Give up if some rows in the desired matrix are not enabled. */
+  if (! MATRIX_ROW_ENABLED_P (desired_matrix, i))
+    return -1;
+  first_old = first_new = i;
+  /* Set last_new to the index + 1 of the row that reaches the
+     bottom boundary in the desired matrix.  Give up if we find a
+     disabled row before we reach the bottom boundary. */
+  i = first_new + 1;
+  while (i < desired_matrix->nrows - 1)
+    {
+      int bottom;
+      if (! MATRIX_ROW_ENABLED_P (desired_matrix, i))
+        return 0;
+      bottom = MATRIX_ROW_BOTTOM_Y (MATRIX_ROW (desired_matrix, i));
+      if (bottom <= yb)
+        ++i;
+      if (bottom >= yb)
+        break;
+    }
+  last_new = i;
+  /* Set last_old to the index + 1 of the row that reaches the bottom
+     boundary in the current matrix.  We don't look at the enabled
+     flag here because we plan to reuse part of the display even if
+     other parts are disabled. */
+  i = first_old + 1;
+  while (i < current_matrix->nrows - 1)
+    {
+      int bottom = MATRIX_ROW_BOTTOM_Y (MATRIX_ROW (current_matrix, i));
+      if (bottom <= yb)
+        ++i;
+      if (bottom >= yb)
+        break;
+    }
+  last_old = i;
+  /* Skip over rows equal at the bottom. */
+  i = last_new;
+  j = last_old;
+  while (i - 1 > first_new
+         && j - 1 > first_old
+         && MATRIX_ROW_ENABLED_P (current_matrix, j - 1)
+         && (MATRIX_ROW (current_matrix, j - 1)->y
+             == MATRIX_ROW (desired_matrix, i - 1)->y)
+         && !MATRIX_ROW (desired_matrix, i - 1)->redraw_fringe_bitmaps_p
+         && row_equal_p (MATRIX_ROW (desired_matrix, i - 1),
+                         MATRIX_ROW (current_matrix, j - 1), 1))
+    --i, --j;
+  last_new = i;
+  last_old = j;
+  /* Nothing to do if all rows are equal. */
+  if (last_new == first_new)
+    return 0;
+  /* Check for integer overflow in size calculation.
+     If next_almost_prime checks (N) for divisibility by 2..10, then
+     it can return at most N + 10, e.g., next_almost_prime (1) == 11.
+     So, set next_almost_prime_increment_max to 10.
+     It's just a coincidence that next_almost_prime_increment_max ==
+     NEXT_ALMOST_PRIME_LIMIT - 1.  If NEXT_ALMOST_PRIME_LIMIT were
+     13, then next_almost_prime_increment_max would be 14, e.g.,
+     because next_almost_prime (113) would be 127. */
+  {
+    verify (NEXT_ALMOST_PRIME_LIMIT == 11);
+    enum { next_almost_prime_increment_max = 10 };
+    ptrdiff_t row_table_max =
+      (min (PTRDIFF_MAX, SIZE_MAX) / (3 * sizeof *mc_row_table)
+       - next_almost_prime_increment_max);
+    ptrdiff_t current_nrows_max = row_table_max - desired_matrix->nrows;
+    if (current_nrows_max < current_matrix->nrows)
+      memory_full (SIZE_MAX);
+  }
+  /* Reallocate vectors, tables etc. if necessary. */
+  if (current_matrix->nrows > mc_old_lines_size)
+    mc_old_lines = xpalloc (mc_old_lines, &mc_old_lines_size,
+                         current_matrix->nrows - mc_old_lines_size,
+                         INT_MAX, sizeof *mc_old_lines);
+  if (desired_matrix->nrows > mc_new_lines_size)
+    mc_new_lines = xpalloc (mc_new_lines, &mc_new_lines_size,
+                         desired_matrix->nrows - mc_new_lines_size,
+                         INT_MAX, sizeof *mc_new_lines);
+  n = desired_matrix->nrows;
+  n += current_matrix->nrows;
+  if (mc_row_table_size < 3 * n)
+    {
+      ptrdiff_t size = next_almost_prime (3 * n);
+      mc_row_table = xnrealloc (mc_row_table, size, sizeof *mc_row_table);
+      mc_row_table_size = size;
+      memset (mc_row_table, 0, size * sizeof *mc_row_table);
+    }
+  if (n > mc_row_entry_pool_size)
+    mc_row_entry_pool = xpalloc (mc_row_entry_pool, &mc_row_entry_pool_size,
+                              n - mc_row_entry_pool_size,
+                              -1, sizeof *mc_row_entry_pool);
+  if (desired_matrix->nrows > mc_runs_size)
+    {
+      mc_runs = xnrealloc (mc_runs, desired_matrix->nrows, sizeof *mc_runs);
+      mc_run_pool = xnrealloc (mc_run_pool, desired_matrix->nrows, sizeof *mc_run_pool);
+      mc_runs_size = desired_matrix->nrows;
+    }
+  nruns = run_idx = 0;
+  mc_row_entry_idx = 0;
+  /* Add rows from the current and desired matrix to the hash table
+     row_hash_table to be able to find equal ones quickly. */
+  for (i = first_old; i < last_old; ++i)
+    {
+      if (MATRIX_ROW_ENABLED_P (current_matrix, i))
+        {
+          entry = mc_add_row_entry (MATRIX_ROW (current_matrix, i));
+          mc_old_lines[i] = entry;
+          ++entry->old_uses;
+        }
+      else
+        mc_old_lines[i] = NULL;
+    }
+  for (i = first_new; i < last_new; ++i)
+    {
+      eassert (MATRIX_ROW_ENABLED_P (desired_matrix, i));
+      entry = mc_add_row_entry (MATRIX_ROW (desired_matrix, i));
+      ++entry->new_uses;
+      entry->new_line_number = i;
+      mc_new_lines[i] = entry;
+    }
+  /* Identify moves based on lines that are unique and equal
+     in both matrices. */
+  for (i = first_old; i < last_old;)
+    if (mc_old_lines[i]
+        && mc_old_lines[i]->old_uses == 1
+        && mc_old_lines[i]->new_uses == 1)
+      {
+        int p, q;
+        int new_line = mc_old_lines[i]->new_line_number;
+        struct run *run = mc_run_pool + run_idx++;
+        /* Record move. */
+        run->current_vpos = i;
+        run->current_y = MATRIX_ROW (current_matrix, i)->y;
+        run->desired_vpos = new_line;
+        run->desired_y = MATRIX_ROW (desired_matrix, new_line)->y;
+        run->nrows = 1;
+        run->height = MATRIX_ROW (current_matrix, i)->height;
+        /* Extend backward. */
+        p = i - 1;
+        q = new_line - 1;
+        while (p > first_old
+               && q > first_new
+               && mc_old_lines[p] == mc_new_lines[q])
+          {
+            int h = MATRIX_ROW (current_matrix, p)->height;
+            --run->current_vpos;
+            --run->desired_vpos;
+            ++run->nrows;
+            run->height += h;
+            run->desired_y -= h;
+            run->current_y -= h;
+            --p, --q;
+          }
+        /* Extend forward. */
+        p = i + 1;
+        q = new_line + 1;
+        while (p < last_old
+               && q < last_new
+               && mc_old_lines[p] == mc_new_lines[q])
+          {
+            int h = MATRIX_ROW (current_matrix, p)->height;
+            ++run->nrows;
+            run->height += h;
+            ++p, ++q;
+          }
+        /* Insert run into list of all runs.  Order runs by copied
+           pixel lines.  Note that we record runs that don't have to
+           be copied because they are already in place.  This is done
+           because we can avoid calling update_window_line in this
+           case. */
+        for (p = 0; p < nruns && mc_runs[p]->height > run->height; ++p)
+          ;
+        for (q = nruns; q > p; --q)
+          mc_runs[q] = mc_runs[q - 1];
+        mc_runs[p] = run;
+        ++nruns;
+        i += run->nrows;
+      }
+      else
+        ++i;
+  /* Do the moves.  Do it in a way that we don't overwrite something
+     we want to copy later on.  This is not solvable in general
+     because there is only one display and we don't have a way to
+     exchange areas on this display.  Example:
+          +-----------+       +-----------+
+          |     A     |       |     B     |
+          +-----------+  -->  +-----------+
+          |     B     |       |     A     |
+          +-----------+       +-----------+
+     Instead, prefer bigger moves, and invalidate moves that would
+     copy from where we copied to. */
+  for (i = 0; i < nruns; ++i)
+    if (mc_runs[i]->nrows > 0)
+      {
+        struct run *r = mc_runs[i];
+        if (r->current_y != r->desired_y)
+          {
+            //  fprintf (stderr, "%s:  r->current/desired_vpos (%d/%d) | r->current/desired_y (%d/%d)\n",
+            //           r->current_y < r->desired_y ? "↓" : "↑",
+            //           r->current_vpos, r->desired_vpos, r->current_y, r->desired_y);
+            //  rif->clear_window_mouse_face (w);
+            //  rif->scroll_run_hook (w, r);
+          }
+        /* Truncate runs that copy to where we copied to, and
+           invalidate runs that copy from where we copied to. */
+        for (j = nruns - 1; j > i; --j)
+          {
+            struct run *p = mc_runs[j];
+            bool truncated_p = 0;
+            if (p->nrows > 0
+                && p->desired_y < r->desired_y + r->height
+                && p->desired_y + p->height > r->desired_y)
+              {
+                if (p->desired_y < r->desired_y)
+                  {
+                    p->nrows = r->desired_vpos - p->desired_vpos;
+                    p->height = r->desired_y - p->desired_y;
+                    truncated_p = 1;
+                  }
+                else
+                  {
+                    int nrows_copied = (r->desired_vpos + r->nrows
+                                        - p->desired_vpos);
+                    if (p->nrows <= nrows_copied)
+                      p->nrows = 0;
+                      else
+                        {
+                          int height_copied = (r->desired_y + r->height
+                                               - p->desired_y);
+                          p->current_vpos += nrows_copied;
+                          p->desired_vpos += nrows_copied;
+                          p->nrows -= nrows_copied;
+                          p->current_y += height_copied;
+                          p->desired_y += height_copied;
+                          p->height -= height_copied;
+                          truncated_p = 1;
+                        }
+                  }
+              }
+            if (r->current_y != r->desired_y
+                /* The condition below is equivalent to
+                   ((p->current_y >= r->desired_y
+                     && p->current_y < r->desired_y + r->height)
+                    || (p->current_y + p->height > r->desired_y
+                        && (p->current_y + p->height
+                            <= r->desired_y + r->height)))
+                   because we have 0 < p->height <= r->height. */
+                && p->current_y < r->desired_y + r->height
+                && p->current_y + p->height > r->desired_y)
+              p->nrows = 0;
+            /* Reorder runs by copied pixel lines if truncated. */
+            if (truncated_p && p->nrows > 0)
+              {
+                int k = nruns - 1;
+                while (mc_runs[k]->nrows == 0 || mc_runs[k]->height < p->height)
+                  k--;
+                memmove (mc_runs + j, mc_runs + j + 1, (k - j) * sizeof (*mc_runs));
+                mc_runs[k] = p;
+              }
+          }
+        /* Assign matrix rows. */
+        for (j = 0; j < r->nrows; ++j)
+          {
+            struct glyph_row *from, *to;
+            bool to_overlapped_p;
+            to = MATRIX_ROW (current_matrix, r->desired_vpos + j);
+            from = MATRIX_ROW (desired_matrix, r->desired_vpos + j);
+            to_overlapped_p = to->overlapped_p;
+            from->redraw_fringe_bitmaps_p = from->fringe_bitmap_periodic_p;
+            assign_row (to, from);
+            /* The above `assign_row' actually does swap, so if we had
+               an overlap in the copy destination of two runs, then
+               the second run would assign a previously disabled bogus
+               row.  But thanks to the truncation code in the
+               preceding for-loop, we no longer have such an overlap,
+               and thus the assigned row should always be enabled. */
+            eassert (to->enabled_p);
+            from->enabled_p = false;
+            to->overlapped_p = to_overlapped_p;
+          }
+      }
+  /* Clear the hash table, for the next time. */
+  for (i = 0; i < mc_row_entry_idx; ++i)
+    mc_row_table[mc_row_entry_pool[i].bucket] = NULL;
+  /* Value is 1 to indicate that we scrolled the display. */
+  return nruns > 0;
+}
+
+/* `mc_update_text_area' (cursor row):  `desired_row` / `desired_row` / `vpos`
+   `mc_update_text_area' (not cursor row):  `current_row` / `desired_row` / `vpos`
+   `mc_update_window_dryrun':  `current_row` / `current_row` / `vpos`
+   `update_window':  `current_row` / `current_row` / `vpos`
+   `mc_update_window_fringes':  `current_row` / `current_row` / `vpos`*/
+enum mc_row_position
+mc_row_position (struct window *w, struct glyph_row *current_row, struct glyph_row *desired_row, int vpos)
+{
+  int header_line_format = WINDOW_HEADER_LINE_HEIGHT (w);
+  ptrdiff_t bob_disregard_narrow = BUF_BEG (XBUFFER (w->contents));
+  ptrdiff_t eob_disregard_narrow = BUF_Z (XBUFFER (w->contents));
+  ptrdiff_t bob_respect_narrow = BUF_BEGV (XBUFFER (w->contents));
+  ptrdiff_t eob_respect_narrow = BUF_ZV (XBUFFER (w->contents));
+  ptrdiff_t buffer_size = eob_disregard_narrow - bob_disregard_narrow;
+  bool buffer_narrowed_p = (eob_respect_narrow - bob_respect_narrow != buffer_size);
+  /* Except as to the cursor row (which is processed before all other rows), we
+  rely upon the previous row in the current matrix.  As to the cursor row, we
+  reply upon the previous row in the desired matrix -- this is acceptable because
+  the pointers between desired/current row matrices have not yet been swapped by
+  `make_current' in `update_window_line', or because the previous row would be
+  the same in both matrices if we jumped to `set_cursor:` within `update_window'
+  and `mc_update_window_dryrun'. */
+  int prev_matrix_row_start_bytepos = (vpos != 0)
+                                      ? MATRIX_ROW_START_BYTEPOS (current_row - 1)
+                                      : -1;
+  int prev_matrix_row_end_bytepos = (vpos != 0)
+                                    ? MATRIX_ROW_END_BYTEPOS (current_row - 1)
+                                    : -1;
+  int matrix_row_start_bytepos = MATRIX_ROW_START_BYTEPOS (desired_row);
+  int matrix_row_end_bytepos = MATRIX_ROW_END_BYTEPOS (desired_row);
+  /* The first condition tests for a solitary row containing ZV, preceded by a
+  row containing a penultimate glyph with a charpos of ZV - 1 followed by an end
+  of row space glyph with a charpos of 0.  The other conditions test for an empty
+  buffer (not narrowed), or an empty narrowed buffer. */
+  bool row_at_zv_p = ((vpos != 0
+                       && (current_row - 1)->used[TEXT_AREA] > 0
+                       && prev_matrix_row_start_bytepos != prev_matrix_row_end_bytepos
+                       && !(current_row - 1)->ends_at_zv_p
+                       && matrix_row_start_bytepos == matrix_row_end_bytepos
+                       && desired_row->ends_at_zv_p)
+                      || (((header_line_format > 0 && vpos == 1)
+                           || (header_line_format == 0 && vpos == 0))
+                          && buffer_narrowed_p
+                          && bob_respect_narrow == eob_respect_narrow)
+                      || (((header_line_format > 0 && vpos == 1)
+                           || (header_line_format == 0 && vpos == 0))
+                          && bob_disregard_narrow == eob_disregard_narrow));
+  /* If line-numbers are active, then space glyph padding equal to its width
+  counted in HPOS are followed by a single row end space glyph.  Line number
+  padding space glyphs have a charpos of -1, whereas the end of row space glyph
+  has a charpos of 0.  If line numbers are inactive, then the row will contain
+  a solitary space glyph with a charpos of -1. */
+  bool row_beyond_zv_p = (matrix_row_start_bytepos == matrix_row_end_bytepos
+                          && !row_at_zv_p);
+  return (row_at_zv_p)
+           ? AT_ZV
+         : (row_beyond_zv_p)
+           ? POST_ZV
+         : PRE_ZV;
+}
+
+/* Update the display of the text area of row VPOS in window W.
+   Value is true if display has changed. */
+static bool
+mc_update_text_area (struct window *w, struct glyph_row *updated_row, int vpos,
+                     struct glyph_matrix *cursor_matrix,
+                     struct mc_essentials essentials, bool draw_p)
+{
+  bool debug_p = false;
+  struct glyph_row *current_row = MATRIX_ROW (w->current_matrix, vpos);
+  struct glyph_row *desired_row = MATRIX_ROW (w->desired_matrix, vpos);
+  struct redisplay_interface *rif = FRAME_RIF (XFRAME (WINDOW_FRAME (w)));
+  bool changed_p = 0;
+  struct mc_RGB lsl = {.red = -1.0, .green = -1.0, .blue = -1.0};
+  enum mc_flavor glyph_flavor = NO_FLAVOR;
+  enum mc_cursor_type cursor_type = NO_CURSOR;
+  int wd = -1;
+  bool cursor_gc_p = false;
+  struct glyph_matrix *desired_matrix = w->desired_matrix;
+  if (debug_p)
+    fprintf (stderr, "mc_update_text_area (%s):  vpos (%d)\n",
+                      mc_window (w), vpos);
+  /* Inasmuch as we process the cursor row before all other rows, we can rely
+  upon the previous `desired_row` to be accurate. */
+  enum mc_row_position row_position =  mc_row_position (w, vpos == w->cursor.vpos
+                                                           ? desired_row
+                                                           : current_row,
+                                                        desired_row, vpos);
+  /* If rows are at different X or Y, or rows have different height,
+     or the current row is marked invalid, write the entire line. */
+  if (!current_row->enabled_p
+      || desired_row->y != current_row->y
+      || desired_row->ascent != current_row->ascent
+      || desired_row->phys_ascent != current_row->phys_ascent
+      || desired_row->phys_height != current_row->phys_height
+      || desired_row->visible_height != current_row->visible_height
+      || current_row->overlapped_p
+      /* This next line is necessary for correctly redrawing
+         mouse-face areas after scrolling and other operations.
+         However, it causes excessive flickering when mouse is moved
+         across the mode line.  Luckily, turning it off for the mode
+         line doesn't seem to hurt anything. -- cyd.
+         But it is still needed for the header line. -- kfs. */
+      || (current_row->mouse_face_p
+          && !(current_row->mode_line_p && vpos > 0))
+      || current_row->x != desired_row->x)
+    {
+      output_cursor_to (w, vpos, 0, desired_row->y, desired_row->x);
+      if (debug_p)
+        fprintf (stderr, "WRITE ENTIRE ROW:\n\
+          vpos (%d) | char (%d/%s) | start_x: (%d) | start_hpos (%d/%d)\n",
+          vpos, desired_row->glyphs[TEXT_AREA]->u.ch,
+          mc_char_to_string (desired_row->glyphs[TEXT_AREA]->u.ch),
+          desired_row->x, 0, desired_row->used[TEXT_AREA] - 1);
+      if (desired_row->used[TEXT_AREA])
+        {
+          block_input ();
+          int len = desired_row->used[TEXT_AREA];
+          int hpos = desired_row->glyphs[TEXT_AREA] - updated_row->glyphs[TEXT_AREA];
+          w->output_cursor.x =
+            mc_draw_glyphs (w, desired_matrix, updated_row, w->mc_matrix,
+                            w->output_cursor.x, TEXT_AREA, hpos, hpos + len,
+                            DRAW_NORMAL_TEXT, 0, vpos, lsl, glyph_flavor,
+                            cursor_type, wd, essentials.active_p, cursor_gc_p,
+                            MC_DRAW_GLYPH_STRING, draw_p);
+          w->output_cursor.hpos += len;
+          unblock_input ();
+        }
+      /* Clear to end of window. */
+      if (draw_p)
+        rif->clear_end_of_line (w, updated_row, TEXT_AREA, -1);
+      changed_p = 1;
+      /* This erases the cursor.  We do this here because
+         noticeoverwritten_text_cursor cannot easily check this, which
+         might indicate that the whole functionality of
+         noticeoverwritten_text_cursor would better be implemented here.
+         On the other hand, we need noticeoverwritten_text_cursor as long
+         as mouse highlighting is done asynchronously outside of
+         redisplay. */
+      if (vpos == w->phys_cursor.vpos)
+        w->phys_cursor_on_p = 0;
+      /* The entire row was redrawn above, so all fake cursors must be redrawn. */
+      mc_draw_row (w, desired_matrix, updated_row, desired_row->glyphs[TEXT_AREA],
+                   desired_row->x, desired_row->used[TEXT_AREA], vpos,
+                   cursor_matrix, essentials, row_position, draw_p, SCRIBE_ONE);
+    }
+    else
+      {
+        int stop, i, x;
+        struct glyph *current_glyph = current_row->glyphs[TEXT_AREA];
+        struct glyph *desired_glyph = desired_row->glyphs[TEXT_AREA];
+        bool overlapping_glyphs_p = current_row->contains_overlapping_glyphs_p;
+        int desired_stop_pos = desired_row->used[TEXT_AREA];
+        bool abort_skipping = 0;
+        /* If the desired row extends its face to the text area end, and unless the
+        current row also does so at the same position, make sure we write at least one
+        glyph, so that the face extension actually takes place. */
+        if (MATRIX_ROW_EXTENDS_FACE_P (desired_row)
+            && (desired_stop_pos < current_row->used[TEXT_AREA]
+                || (desired_stop_pos == current_row->used[TEXT_AREA]
+                    && !MATRIX_ROW_EXTENDS_FACE_P (current_row))))
+          --desired_stop_pos;
+        stop = min (current_row->used[TEXT_AREA], desired_stop_pos);
+        i = 0;
+        x = desired_row->x;
+        int clear_to_x = 0;
+
+        /* Loop over glyphs that current and desired row may have in common. */
+        while (i < stop)
+          {
+            array_glyphs_skipped.used = 0;
+            bool can_skip_p = !abort_skipping;
+            /* Skip over glyphs that both rows have in common.  These don't have
+            to be written.  We can't skip if the last current glyph overlaps the
+            glyph to its right.  For example, consider a current row of `if' with
+            the `f' in Courier bold so that it overlaps the ` ' to its right.
+            If the desired row is ` ', we would skip over the space after the
+            `if' and there would remain a pixel from the `f' on the screen. */
+            if (overlapping_glyphs_p && i > 0)
+              {
+                struct glyph *glyph = &current_row->glyphs[TEXT_AREA][i - 1];
+                int left, right;
+                rif->get_glyph_overhangs (glyph, XFRAME (w->frame), &left, &right);
+                can_skip_p = (right == 0 && !abort_skipping);
+              }
+            if (can_skip_p)
+              {
+                int start_hpos = i;
+                while (i < stop
+                       && GLYPH_EQUAL_P (desired_glyph, current_glyph))
+                  {
+                    ++array_glyphs_skipped.used;
+                    if (array_glyphs_skipped.allocated < array_glyphs_skipped.used)
+                      {
+                        int old_alloc = array_glyphs_skipped.allocated;
+                        int new_elts = array_glyphs_skipped.used - array_glyphs_skipped.allocated;
+                        array_glyphs_skipped.skipped =
+                          xpalloc (array_glyphs_skipped.skipped,
+                                   &array_glyphs_skipped.allocated,
+                                   new_elts,
+                                   INT_MAX,
+                                   sizeof *array_glyphs_skipped.skipped);
+                        memset (array_glyphs_skipped.skipped + old_alloc, 0,
+                                 (array_glyphs_skipped.allocated - old_alloc)
+                                   * sizeof *array_glyphs_skipped.skipped);
+                      }
+                    int nth = array_glyphs_skipped.used - 1;
+                    array_glyphs_skipped.skipped[nth].x = x;
+                    array_glyphs_skipped.skipped[nth].hpos = i;
+                    array_glyphs_skipped.skipped[nth].enabled_p = true;
+                    x += desired_glyph->pixel_width;
+                    ++desired_glyph, ++current_glyph, ++i;
+                  }
+                /* Consider the case that the current row contains "xxx ppp ggg" in
+                italic Courier font, and the desired row is "xxx ggg".  The character `p'
+                has lbearing, `g' has not.  The loop above will stop in front of the
+                first `p' in the current row.  If we would start writing glyphs there, we
+                wouldn't erase the lbearing of the `p'.  The rest of the lbearing problem
+                is then taken care of by draw_glyphs. */
+                if (overlapping_glyphs_p
+                    && i > 0
+                    && i < current_row->used[TEXT_AREA]
+                    && (current_row->used[TEXT_AREA] != desired_row->used[TEXT_AREA]))
+                  {
+                    int left, right;
+                    rif->get_glyph_overhangs (current_glyph,
+                            XFRAME (w->frame),
+                            &left, &right);
+                    while (left > 0 && i > 0)
+                      {
+                        --i, --desired_glyph, --current_glyph;
+                        x -= desired_glyph->pixel_width;
+                        left -= desired_glyph->pixel_width;
+                      }
+                    /* Abort the skipping algorithm if we end up before
+                       our starting point, to avoid looping (bug#1070).
+                       This can happen when the lbearing is larger than
+                       the pixel width. */
+                    abort_skipping = (i < start_hpos);
+                  }
+              }
+            /* Try to avoid writing the entire rest of the desired row
+               by looking for a resync point.  This mainly prevents
+               mode line flickering in the case the mode line is in
+               fixed-pitch font, which it usually will be. */
+            if (i < desired_row->used[TEXT_AREA])
+              {
+                int start_x = x, start_hpos = i;
+                struct glyph *start = desired_glyph;
+                int current_x = x;
+                bool skip_first_p = !can_skip_p;
+                /* Find the next glyph that's equal again. */
+                while (i < stop
+                       && (skip_first_p
+                           || !GLYPH_EQUAL_P (desired_glyph, current_glyph))
+                       && x == current_x)
+                  {
+                    x += desired_glyph->pixel_width;
+                    current_x += current_glyph->pixel_width;
+                    ++desired_glyph, ++current_glyph, ++i;
+                    skip_first_p = 0;
+                  }
+                for (int elt = 0;
+                     elt < array_glyphs_skipped.used;
+                     ++elt)
+                  {
+                    int x = array_glyphs_skipped.skipped[elt].x;
+                    int hpos = array_glyphs_skipped.skipped[elt].hpos;
+                    struct glyph *target_glyph =
+                      mc_get_cursor_glyph (w, desired_matrix, updated_row, hpos, vpos);
+                    if (debug_p)
+                      fprintf (stderr, "SKIPPED:  vpos (%d) | char (%d/%s) | x: (%d) | hpos (%d/%d)\n",
+                                       vpos, target_glyph->u.ch,
+                                       mc_char_to_string (target_glyph->u.ch),
+                                       x, hpos, updated_row->used[TEXT_AREA] - 1);
+                    mc_draw_row (w, desired_matrix, updated_row, target_glyph, x, 1, vpos,
+                                 cursor_matrix, essentials, row_position, draw_p, SKIPPED);
+                  }
+                if (i == start_hpos || x != current_x)
+                  {
+                    i = start_hpos;
+                    x = start_x;
+                    desired_glyph = start;
+                    break;
+                  }
+                output_cursor_to (w, vpos, start_hpos, desired_row->y, start_x);
+                /* Re-draw a portion of the row. */
+                if (debug_p)
+                  fprintf (stderr, "REDRAW SEGMENT:\n\
+                    vpos (%d) | char (%d/%s) | x: (%d) | hpos (%d/%d) | length (%d)\n",
+                    vpos, start->u.ch, mc_char_to_string (start->u.ch),
+                    start_x, start_hpos, updated_row->used[TEXT_AREA] - 1, i - start_hpos);
+                block_input ();
+                int len = i - start_hpos;
+                int hpos = start - updated_row->glyphs[TEXT_AREA];
+                w->output_cursor.x =
+                  mc_draw_glyphs (w, desired_matrix, updated_row, w->mc_matrix,
+                                  w->output_cursor.x, TEXT_AREA, hpos, hpos + len,
+                                  DRAW_NORMAL_TEXT, 0, vpos, lsl, glyph_flavor,
+                                  cursor_type, wd, essentials.active_p,
+                                  cursor_gc_p, MC_DRAW_GLYPH_STRING, draw_p);
+                w->output_cursor.hpos += len;
+                unblock_input ();
+                mc_draw_row (w, desired_matrix, updated_row, start, start_x, i - start_hpos,
+                             vpos, cursor_matrix, essentials, row_position, draw_p, SCRIBE_TWO);
+                changed_p = 1;
+              }
+          }
+
+        /* Write the rest. */
+        if (i < desired_row->used[TEXT_AREA])
+          {
+            output_cursor_to (w, vpos, i, desired_row->y, x);
+            if (debug_p)
+              fprintf (stderr, "DRAW REMAINDER OF THE ROW:\n\
+                vpos (%d) | char (%d/%s) | x: (%d) | hpos (%d/%d) | length (%d)\n",
+                vpos, desired_glyph->u.ch, mc_char_to_string (desired_glyph->u.ch),
+                x, i, desired_row->used[TEXT_AREA] - 1, desired_row->used[TEXT_AREA] - i);
+            block_input ();
+            int len = desired_row->used[TEXT_AREA] - i;
+            int hpos = desired_glyph - updated_row->glyphs[TEXT_AREA];
+            w->output_cursor.x =
+              mc_draw_glyphs (w, desired_matrix, updated_row, w->mc_matrix,
+                              w->output_cursor.x, TEXT_AREA, hpos, hpos + len,
+                              DRAW_NORMAL_TEXT, 0, vpos, lsl, glyph_flavor,
+                              cursor_type, wd, essentials.active_p, cursor_gc_p,
+                              MC_DRAW_GLYPH_STRING, draw_p);
+            w->output_cursor.hpos += len;
+            unblock_input ();
+            /* FIXME:  Although we need to update the cache between the end of
+            updated_row and the right window edge, it is not necessary to draw
+            those fake cursors. Although we may not be able to see it with the
+            naked eye, those fake cursors are being superimposed on the existing
+            fake cursors that do not get erased by the code in the section below.
+            It would be better to only update the cache and suppress double-drawing
+            the fake cursors for the aforementioned area at issue. */
+            mc_draw_row (w, desired_matrix, updated_row, desired_glyph, x,
+                         desired_row->used[TEXT_AREA] - i, vpos, cursor_matrix,
+                         essentials, row_position, draw_p, SCRIBE_THREE);
+            changed_p = 1;
+          }
+          /* Everything after the previous change remained the same.  `i` and `x` were
+          incremented to the end of the glyph row.  i == desired_row->used[TEXT_AREA]
+          The `w->output_cursor.x/y/hpos/vpos` is at the end of the previous change.
+          When this situation exists, the distance between the end of the glyph row and
+          the right edge of the window will _not_ be cleared.  Therefore, it is okay to
+          draw the floating glyphs for the horizontal/vertical rulers here. */
+          else if (changed_p
+                   && w->output_cursor.hpos != updated_row->used[TEXT_AREA])
+            {
+              int x = w->output_cursor.x;
+              int hpos = w->output_cursor.hpos;
+              struct glyph *start = mc_get_cursor_glyph (w, desired_matrix,
+                                                         updated_row, hpos, vpos);
+              if (w->output_cursor.x == updated_row->pixel_width)
+                x -= start->pixel_width;
+              if (debug_p)
+                fprintf (stderr, "POST-CHANGED:  vpos (%d) | x (%d) | hpos (%d/%d) | char (%d/%s)\n",
+                                 vpos, x, hpos, updated_row->used[TEXT_AREA] - 1,
+                                 start->u.ch, mc_char_to_string (start->u.ch));
+              mc_draw_row (w, desired_matrix, updated_row, start, x,
+                           updated_row->used[TEXT_AREA] - hpos, vpos, cursor_matrix,
+                           essentials, row_position, draw_p, POST_CHANGED);
+            }
+            /* There were no changes and i == desired_row->used[TEXT_AREA] */
+            else if (!changed_p)
+              {
+                if (debug_p)
+                  fprintf (stderr, "UNCHANGED -- WRITE ENTIRE LINE:  vpos (%d) | row->used (%d)\n",
+                                   vpos, updated_row->used[TEXT_AREA] - 1);
+                mc_draw_row (w, desired_matrix, updated_row, desired_row->glyphs[TEXT_AREA],
+                             desired_row->x, desired_row->used[TEXT_AREA], vpos,
+                             cursor_matrix, essentials, row_position, draw_p, UNCHANGED);
+              }
+
+        /* Maybe clear to end of line. */
+        if (MATRIX_ROW_EXTENDS_FACE_P (desired_row))
+          {
+            /* If new row extends to the end of the text area, nothing
+               has to be cleared, if and only if we did a write_glyphs
+               above.  This is made sure by setting desired_stop_pos
+               appropriately above. */
+            eassert (i < desired_row->used[TEXT_AREA]
+                     || ((desired_row->used[TEXT_AREA] == current_row->used[TEXT_AREA])
+                         && MATRIX_ROW_EXTENDS_FACE_P (current_row)));
+          }
+          else if (MATRIX_ROW_EXTENDS_FACE_P (current_row))
+            {
+              /* If old row extends to the end of the text area, clear. */
+              if (i >= desired_row->used[TEXT_AREA])
+                output_cursor_to (w, vpos, i, desired_row->y, desired_row->pixel_width);
+              if (draw_p)
+                rif->clear_end_of_line (w, updated_row, TEXT_AREA, -1);
+              clear_to_x = -1;
+              changed_p = 1;
+            }
+            else if (desired_row->pixel_width < current_row->pixel_width)
+              {
+                /* Otherwise clear to the end of the old row.  Everything
+                   after that position should be clear already. */
+                int xlim;
+                if (i >= desired_row->used[TEXT_AREA])
+                  output_cursor_to (w, vpos, i, desired_row->y, desired_row->pixel_width);
+                /* If cursor is displayed at the end of the line, make sure
+                   it's cleared.  Nowadays we don't have a phys_cursor_glyph
+                   with which to erase the cursor (because this method
+                   doesn't work with lbearing/rbearing), so we must do it this way. */
+                if (vpos == w->phys_cursor.vpos
+                    && (desired_row->reversed_p
+                        ? (w->phys_cursor.hpos < 0)
+                        : (w->phys_cursor.hpos >= desired_row->used[TEXT_AREA])))
+                  {
+                    w->phys_cursor_on_p = 0;
+                    xlim = -1;
+                  }
+                  else
+                    xlim = current_row->pixel_width;
+                if (draw_p)
+                  rif->clear_end_of_line (w, updated_row, TEXT_AREA, xlim);
+                clear_to_x = xlim;
+                changed_p = 1;
+              }
+
+        if (changed_p
+            && clear_to_x != 0)
+          {
+            int text_area_width = window_box_width (w, TEXT_AREA);
+            struct mc_RGB debug_fg = {.red = 0.867, .green = 0.867, .blue = 0.867};
+            struct glyph *target_glyph =
+              updated_row->glyphs[TEXT_AREA] + updated_row->used[TEXT_AREA] - 1;
+            /* `mc_engine' only draws an MC_GLYPH when x < updated_row->pixel_width.
+            The current design inhibits drawing over an existing glyph at the end of a
+            word-wrapped line.  Said glyph receives a fake cursor in either one of the
+            previous sections above, and should not be overwritten with another one.
+            This design is needed because a word-wrapped line does not receive an extra
+            space like non-word-wrapped lines do. */
+            int x = updated_row->pixel_width;
+            int hpos = updated_row->used[TEXT_AREA] - 1;
+            int x_limit = (clear_to_x == -1)
+                          ? text_area_width
+                          : clear_to_x;
+            struct buffer *b = XBUFFER (w->contents);
+            bool fill_column_trumps_p = (!NILP (BVAR (b, ch_vertical_ruler))
+                                         && !NILP (BVAR (b, fc_visible))
+                                         && w->cursor.x == essentials.fc_x);
+            if (mc_stderr_p)
+              fprintf (stderr, "mc_update_text_area (floating):  vpos (%d) | x_limit (%d)\n",
+                               vpos, x_limit);
+            if (BUFFERP (w->contents)
+                && !NILP (BVAR (b, fc_visible))
+                && (essentials.active_p
+                    || (!essentials.active_p
+                        && !NILP (BVAR (b, fc_inactive_windows))))
+                && x < text_area_width
+                && essentials.fc_x >= x
+                && target_glyph != NULL
+                && draw_p)
+              mc_engine (w, desired_matrix, updated_row, target_glyph, TEXT_AREA,
+                         x, x_limit, updated_row->y, hpos, vpos, MC_BAR, 1,
+                         cursor_matrix, essentials, row_position,
+                         debug_p ? debug_fg : essentials.fc_fg[row_position],
+                         FILL_COLUMN, draw_p, NOWHERE, NO_CACHE);
+            if (BUFFERP (w->contents)
+                && !NILP (BVAR (b, crosshairs))
+                && !NILP (BVAR (b, ch_horizontal_ruler))
+                && (essentials.active_p
+                    || (!essentials.active_p
+                        && !NILP (BVAR (b, ch_inactive_windows))))
+                && x < text_area_width
+                && vpos == w->cursor.vpos
+                && target_glyph != NULL
+                && draw_p)
+              mc_engine (w, desired_matrix, updated_row, target_glyph, TEXT_AREA,
+                         x, x_limit, updated_row->y, hpos, vpos, MC_HBAR, 1,
+                         cursor_matrix, essentials, row_position,
+                         debug_p ? debug_fg : essentials.ch_fg[row_position],
+                         HORIZONTAL_RULER, draw_p, NOWHERE, NO_CACHE);
+            if (BUFFERP (w->contents)
+                && !NILP (BVAR (b, crosshairs))
+                && !NILP (BVAR (b, ch_vertical_ruler))
+                && (essentials.active_p
+                    || (!essentials.active_p
+                        && !NILP (BVAR (b, ch_inactive_windows))))
+                && !fill_column_trumps_p
+                && x < text_area_width
+                && vpos != w->cursor.vpos
+                && w->cursor.x >= x
+                && target_glyph != NULL
+                && draw_p)
+              mc_engine (w, desired_matrix, updated_row, target_glyph, TEXT_AREA,
+                         x, x_limit, updated_row->y, hpos, vpos, MC_BAR, 1,
+                         cursor_matrix, essentials, row_position,
+                         debug_p ? debug_fg : essentials.ch_fg[row_position],
+                         VERTICAL_RULER, draw_p, NOWHERE, NO_CACHE);
+          }
+
+      }
+  return changed_p;
+}
+
+/* Update row VPOS in window W.  Value is true if display has been changed. */
+static bool
+mc_update_window_line (struct window *w, int vpos, bool *mouse_face_overwritten_p,
+                       struct glyph_matrix *cursor_matrix,
+                       struct mc_essentials essentials, bool draw_p)
+{
+  struct glyph_row *current_row = MATRIX_ROW (w->current_matrix, vpos);
+  struct glyph_row *desired_row = MATRIX_ROW (w->desired_matrix, vpos);
+  struct redisplay_interface *rif = FRAME_RIF (XFRAME (WINDOW_FRAME (w)));
+  bool changed_p = 0;
+  /* A row can be completely invisible in case a desired matrix was
+     built with a vscroll and then make_cursor_line_fully_visible shifts
+     the matrix.  Make sure to make such rows current anyway, since
+     we need the correct y-position, for example, in the current matrix. */
+  if (desired_row->mode_line_p
+      || desired_row->visible_height > 0)
+    {
+      eassert (desired_row->enabled_p);
+      /* Update display of the left margin area, if there is one. */
+      if (!desired_row->full_width_p && w->left_margin_cols > 0)
+        {
+          changed_p = 1;
+          update_marginal_area (w, desired_row, LEFT_MARGIN_AREA, vpos);
+          /* Setting this flag will ensure the vertical border, if
+             any, between this window and the one on its left will be
+             redrawn.  This is necessary because updating the left
+             margin area can potentially draw over the border. */
+          current_row->redraw_fringe_bitmaps_p = 1;
+        }
+      bool updated_p = mc_update_text_area (w, desired_row, vpos, cursor_matrix,
+                                            essentials, draw_p);
+      /* Update the display of the text area. */
+      if (updated_p)
+        {
+          changed_p = 1;
+          if (current_row->mouse_face_p)
+            *mouse_face_overwritten_p = 1;
+        }
+      /* Update display of the right margin area, if there is one. */
+      if (!desired_row->full_width_p && w->right_margin_cols > 0)
+        {
+          changed_p = 1;
+          update_marginal_area (w, desired_row, RIGHT_MARGIN_AREA, vpos);
+        }
+      /* Draw truncation marks etc. */
+      if (!current_row->enabled_p
+          || desired_row->y != current_row->y
+          || desired_row->visible_height != current_row->visible_height
+          || desired_row->cursor_in_fringe_p != current_row->cursor_in_fringe_p
+          || desired_row->overlay_arrow_bitmap != current_row->overlay_arrow_bitmap
+          || current_row->redraw_fringe_bitmaps_p
+          || desired_row->mode_line_p != current_row->mode_line_p
+          || desired_row->exact_window_width_line_p != current_row->exact_window_width_line_p
+          || (MATRIX_ROW_CONTINUATION_LINE_P (desired_row)
+              != MATRIX_ROW_CONTINUATION_LINE_P (current_row)))
+        rif->after_update_window_line_hook (w, desired_row);
+    }
+  /* Update current_row from desired_row. */
+  make_current (w->desired_matrix, w->current_matrix, vpos);
+  return changed_p;
+}
+
+void
+mc_update_window_erase (struct window *w, struct mc_matrix old_matrix)
+{
+  bool debug_p = false;
+  bool go_one_p = (old_matrix.cursors_used[MC_CACHE] > 0
+                   || old_matrix.cursors_used[CH_CACHE] > 0
+                   || old_matrix.cursors_used[FC_CACHE] > 0);
+  bool go_two_p = (BUFFERP (w->contents)
+                   && (!NILP (BVAR (XBUFFER (w->contents), crosshairs))
+                       || !NILP (BVAR (XBUFFER (w->contents), fc_visible))
+                       || !NILP (BVAR (XBUFFER (w->contents), mc_conf))));
+  bool updating_frame_p = false;
+  struct frame *f = XFRAME (w->frame);
+  if (XFRAME (w->frame) != f->mc_updating_frame
+      && (go_one_p || go_two_p))
+    {
+      updating_frame_p = true;
+      update_begin (f);
+    }
+  if (w->phys_cursor_on_p
+      && go_two_p)
+    erase_phys_cursor (w);
+  for (int vnth = 0;
+       go_one_p
+       && vnth < w->mc_matrix.vpos_used;
+       ++vnth)
+    {
+      for (enum mc_cache_type cache_type = MC_CACHE;
+           cache_type < NO_CACHE;
+           ++cache_type)
+        for (int nth_0 = 0;
+             mc_traverse_cache_p (old_matrix, cache_type, vnth, nth_0);
+             ++nth_0)
+          {
+            bool same_p = false;
+            for (int w_nth = 0; w_nth < w->mc_matrix.vpos[vnth].cache_used[cache_type]; ++w_nth)
+              {
+                same_p |= (old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.type
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.type
+                           && ((old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.bytepos
+                                == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.bytepos)
+                               || (old_matrix.vpos[vnth].cache[cache_type][nth_0].row_position == AT_ZV
+                                   && w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].row_position == AT_ZV)
+                               || (old_matrix.vpos[vnth].cache[cache_type][nth_0].row_position == POST_ZV
+                                   && w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].row_position == POST_ZV))
+                           && ((old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.charpos
+                                == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.charpos)
+                               || (old_matrix.vpos[vnth].cache[cache_type][nth_0].row_position == AT_ZV
+                                   && w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].row_position == AT_ZV)
+                               || (old_matrix.vpos[vnth].cache[cache_type][nth_0].row_position == POST_ZV
+                                   && w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].row_position == POST_ZV))
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.u.val
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.u.val
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.face_id
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.face_id
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.padding_p
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.padding_p
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.left_box_line_p
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.left_box_line_p
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.right_box_line_p
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.right_box_line_p
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.voffset
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.voffset
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.pixel_width
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.pixel_width
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.slice.img.x
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.slice.img.x
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.slice.img.y
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.slice.img.y
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.slice.img.width
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.slice.img.width
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.slice.img.height
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.slice.img.height
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.slice.cmp.from
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.slice.cmp.from
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].x
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].x
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].fx
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].fx
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].y
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].y
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].fy
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].fy
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].hpos
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].hpos
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].vpos
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].vpos
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].wd
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].wd
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].h
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].h
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].cursor_type
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].cursor_type
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].cursor_width
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].cursor_width
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].fg.red
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].fg.red
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].fg.green
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].fg.green
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].fg.blue
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].fg.blue
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].bg.red
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].bg.red
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].bg.green
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].bg.green
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].bg.blue
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].bg.blue
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].active_p
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].active_p
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph_flavor
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph_flavor
+                           && old_matrix.vpos[vnth].cache[cache_type][nth_0].enabled_p
+                             == w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].enabled_p);
+                if (same_p)
+                  {
+                    if (debug_p)
+                      fprintf (stderr, "HIT (%s):  vpos (%d) | hpos (%d) | char (%s)\n",
+                                       (cache_type == MC_CACHE)
+                                         ? "MC"
+                                       : (cache_type == CH_CACHE)
+                                         ? "CH"
+                                       : (cache_type == FC_CACHE)
+                                         ? "FC"
+                                       : "NO",
+                                       w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].vpos,
+                                       w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].hpos,
+                                       mc_char_to_string (w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.u.ch));
+                    w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].same_p = true;
+                    break;
+                  }
+                  else if (debug_p)
+                    {
+                      int old_cache_used = old_matrix.vpos[vnth].cache_used[cache_type];
+                      int new_cache_used = w->mc_matrix.vpos[vnth].cache_used[cache_type];
+                      fprintf (stderr, "MISS (%s):  vpos (%d) | hpos (%d v. %d) | char (%s v. %s) | cache_used (%d v. %d)\n",
+                                       (cache_type == MC_CACHE)
+                                         ? "MC"
+                                       : (cache_type == CH_CACHE)
+                                         ? "CH"
+                                       : (cache_type == FC_CACHE)
+                                         ? "FC"
+                                       : "NO",
+                                       w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].vpos,
+                                       old_matrix.vpos[vnth].cache[cache_type][nth_0].hpos,
+                                       w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].hpos,
+                                       mc_char_to_string (old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph.u.ch),
+                                       mc_char_to_string (w->mc_matrix.vpos[vnth].cache[cache_type][w_nth].glyph.u.ch),
+                                       old_cache_used,
+                                       new_cache_used);
+                    }
+              }
+            if (!same_p)
+              {
+                /* `matrix_row' in `dispnew.c` contains the following tests,
+                eassert (matrix && matrix->rows);
+                eassert (row >= 0 && row < matrix->nrows); */
+                bool barf_crash_one = (w->current_matrix && w->current_matrix->rows) ? false : true;
+                if (barf_crash_one)
+                  continue;
+                bool barf_crash_two = (vnth >= 0 && vnth < w->current_matrix->nrows) ? false : true;
+                if (barf_crash_two)
+                  continue;
+                struct glyph_row *vnth_row = MATRIX_ROW (w->current_matrix, vnth);
+                int x_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].x;
+                int fx_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].fx;
+                int y_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].y;
+                int fy_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].fy;
+                int hpos_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].hpos;
+                int vpos_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].vpos;
+                int wd_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].wd;
+                int h_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].h;
+                enum mc_cursor_type cursor_type_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].cursor_type;
+                int cursor_width_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].cursor_width;
+                //  struct mc_RGB lsl_fg_0 = {.red = old_matrix.vpos[vnth].cache[cache_type][nth_0].fg.red,
+                //                            .green = old_matrix.vpos[vnth].cache[cache_type][nth_0].fg.green,
+                //                            .blue = old_matrix.vpos[vnth].cache[cache_type][nth_0].fg.blue};
+                struct mc_RGB lsl_bg_0 = {.red = old_matrix.vpos[vnth].cache[cache_type][nth_0].bg.red,
+                                          .green = old_matrix.vpos[vnth].cache[cache_type][nth_0].bg.green,
+                                          .blue = old_matrix.vpos[vnth].cache[cache_type][nth_0].bg.blue};
+                bool active_p_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].active_p;
+                enum mc_flavor glyph_flavor_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].glyph_flavor;
+                bool enabled_p_0 = old_matrix.vpos[vnth].cache[cache_type][nth_0].enabled_p;
+                if (vpos_0 == vnth
+                    && glyph_flavor_0 == MC_GLYPH
+                    && enabled_p_0
+                    && vnth_row->enabled_p)
+                  {
+                    mc_erase_cursor (w, w->current_matrix, vnth_row, old_matrix,
+                                     x_0, y_0, hpos_0, vpos_0, glyph_flavor_0,
+                                     cursor_type_0, wd_0);
+                    old_matrix.vpos[vnth].cache[cache_type][nth_0].enabled_p = false;
+                    --old_matrix.cursors_used[cache_type];
+                    /* If we inadvertently erased another fake cursor at the same
+                    HPOS that is still enabled_p in the `old_matrix`, then redraw it. */
+                    for (enum mc_cache_type cache_type = MC_CACHE;
+                         cache_type < NO_CACHE;
+                         ++cache_type)
+                      {
+                        for (int nth_1 = 0;
+                             mc_traverse_cache_p (old_matrix, cache_type, vnth, nth_1);
+                             ++nth_1)
+                          {
+                            int x_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].x;
+                            int fx_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].fx;
+                            int y_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].y;
+                            int fy_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].fy;
+                            int hpos_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].hpos;
+                            int vpos_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].vpos;
+                            int wd_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].wd;
+                            int h_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].h;
+                            enum mc_cursor_type cursor_type_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].cursor_type;
+                            int cursor_width_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].cursor_width;
+                            struct mc_RGB lsl_fg_1 = {.red = old_matrix.vpos[vnth].cache[cache_type][nth_1].fg.red,
+                                                      .green = old_matrix.vpos[vnth].cache[cache_type][nth_1].fg.green,
+                                                      .blue = old_matrix.vpos[vnth].cache[cache_type][nth_1].fg.blue};
+                            //  struct mc_RGB lsl_bg_1 = {.red = old_matrix.vpos[vnth].cache[cache_type][nth_1].bg.red,
+                            //                            .green = old_matrix.vpos[vnth].cache[cache_type][nth_1].bg.green,
+                            //                            .blue = old_matrix.vpos[vnth].cache[cache_type][nth_1].bg.blue};
+                            bool active_p_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].active_p;
+                            enum mc_flavor glyph_flavor_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].glyph_flavor;
+                            bool enabled_p_1 = old_matrix.vpos[vnth].cache[cache_type][nth_1].enabled_p;
+                            bool go_p_1 = (hpos_0 == hpos_1
+                                           && enabled_p_1);
+                            if (!go_p_1)
+                              continue;
+                            bool remove_p_1 = false;
+                            mc_draw_erase_hybrid (w, w->current_matrix, vnth_row, x_1,
+                                                  fx_1, y_1, fy_1, hpos_1, vpos_1,
+                                                  wd_1, h_1, cursor_type_1,
+                                                  cursor_width_1, lsl_fg_1,
+                                                  active_p_1, glyph_flavor_1,
+                                                  remove_p_1);
+                          }
+                      }
+                  }
+                  else if (vpos_0 == vnth
+                           && enabled_p_0
+                           && vnth_row->enabled_p)
+                    {
+                      bool remove_p_0 = true;
+                      mc_draw_erase_hybrid (w, w->current_matrix, vnth_row, x_0,
+                                            fx_0, y_0, fy_0, hpos_0, vpos_0, wd_0,
+                                            h_0, cursor_type_0, cursor_width_0,
+                                            lsl_bg_0, active_p_0, glyph_flavor_0,
+                                            remove_p_0);
+                      old_matrix.vpos[vnth].cache[cache_type][nth_0].enabled_p = false;
+                      --old_matrix.cursors_used[cache_type];
+                      /* If we inadvertently erased another fake cursor at the same
+                      HPOS that is still enabled_p in the `old_matrix`, then redraw it. */
+                      for (enum mc_cache_type cache_type = MC_CACHE;
+                           cache_type < NO_CACHE;
+                           ++cache_type)
+                        {
+                          for (int nth_2 = 0;
+                               mc_traverse_cache_p (old_matrix, cache_type, vnth, nth_2);
+                               ++nth_2)
+                            {
+                              int x_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].x;
+                              int fx_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].fx;
+                              int y_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].y;
+                              int fy_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].fy;
+                              int hpos_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].hpos;
+                              int vpos_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].vpos;
+                              int wd_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].wd;
+                              int h_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].h;
+                              enum mc_cursor_type cursor_type_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].cursor_type;
+                              int cursor_width_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].cursor_width;
+                              struct mc_RGB lsl_fg_2 = {.red = old_matrix.vpos[vnth].cache[cache_type][nth_2].fg.red,
+                                                        .green = old_matrix.vpos[vnth].cache[cache_type][nth_2].fg.green,
+                                                        .blue = old_matrix.vpos[vnth].cache[cache_type][nth_2].fg.blue};
+                              //  struct mc_RGB lsl_bg_2 = {.red = old_matrix.vpos[vnth].cache[cache_type][nth_2].bg.red,
+                              //                            .green = old_matrix.vpos[vnth].cache[cache_type][nth_2].bg.green,
+                              //                            .blue = old_matrix.vpos[vnth].cache[cache_type][nth_2].bg.blue};
+                              bool active_p_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].active_p;
+                              enum mc_flavor glyph_flavor_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].glyph_flavor;
+                              bool enabled_p_2 = old_matrix.vpos[vnth].cache[cache_type][nth_2].enabled_p;
+                              bool go_p_2 = (hpos_0 == hpos_2
+                                             && fx_0 <= fx_2
+                                             && fx_0 + wd_0 > fx_2 + wd_2
+                                             && enabled_p_2);
+                              if (!go_p_2)
+                                continue;
+                              bool remove_p_2 = false;
+                              mc_draw_erase_hybrid (w, w->current_matrix, vnth_row, x_2,
+                                                    fx_2, y_2, fy_2, hpos_2, vpos_2,
+                                                    wd_2, h_2, cursor_type_2,
+                                                    cursor_width_2, lsl_fg_2,
+                                                    active_p_2, glyph_flavor_2,
+                                                    remove_p_2);
+                            }
+                        }
+                    }
+              }
+            }
+    }
+  if (updating_frame_p)
+    update_end (f);
+}
+
+void
+mc_update_window_dryrun (struct window *w, bool force_p, struct mc_essentials essentials)
+{
+  if (!BUFFERP (w->contents))
+    return;
+
+  if (w->mc_matrix.cursors_used[MC_CACHE] == 0
+      && w->mc_matrix.cursors_used[CH_CACHE] == 0
+      && w->mc_matrix.cursors_used[FC_CACHE] == 0
+      && NILP (BVAR (XBUFFER (w->contents), mc_conf))
+      && NILP (BVAR (XBUFFER (w->contents), crosshairs))
+      && NILP (BVAR (XBUFFER (w->contents), fc_visible)))
+    return;
+
+  // clock_t clock_start = clock();
+
+  bool draw_p = false;
+
+  struct glyph_matrix *saved_desired = mc_save_glyph_matrix (w->desired_matrix);
+  struct glyph_matrix *saved_current = mc_save_glyph_matrix (w->current_matrix);
+
+  struct mc_matrix old_matrix = mc_save_cache_matrix (w->mc_matrix);
+
+  mc_reset_cache (w);
+
+  struct glyph_matrix *cursor_matrix = NULL;
+
+  struct glyph_matrix *desired_matrix = w->desired_matrix;
+  bool paused_p;
+  int preempt_count = baud_rate / 2400 + 1;
+
+#ifdef GLYPH_DEBUG
+  /* Check that W's frame doesn't have glyph matrices. */
+  eassert (FRAME_WINDOW_P (XFRAME (WINDOW_FRAME (w))));
+#endif
+
+  /* Check pending input the first time so that we can quickly return. */
+  if (!force_p)
+    detect_input_pending_ignore_squeezables ();
+
+  /* If forced to complete the update, or if no input is pending, do the update. */
+  if (force_p || !input_pending || !NILP (do_mouse_tracking))
+    {
+      struct glyph_row *header_line_row;
+      bool changed_p = 0;
+      bool mouse_face_overwritten_p = 0;
+      int n_updated = 0;
+      //  struct redisplay_interface *rif = FRAME_RIF (XFRAME (WINDOW_FRAME (w)));
+      //  rif->update_window_begin_hook (w);
+      int yb = window_text_bottom_y (w);
+      struct glyph_row *row = MATRIX_ROW (desired_matrix, 0);
+      struct glyph_row *end = MATRIX_MODE_LINE_ROW (desired_matrix);
+
+      /* Take note of the header line, if there is one.  We will
+         update it below, after updating all of the window's lines. */
+      if (row->mode_line_p)
+        {
+          header_line_row = row;
+          ++row;
+        }
+        else
+          header_line_row = NULL;
+
+      /* Update the mode line, if necessary. */
+      struct glyph_row *mode_line_row = MATRIX_MODE_LINE_ROW (desired_matrix);
+      if (mode_line_row->mode_line_p && mode_line_row->enabled_p)
+        {
+          mode_line_row->y = yb + WINDOW_SCROLL_BAR_AREA_HEIGHT (w);
+          update_window_line (w, MATRIX_ROW_VPOS (mode_line_row,
+                                                  desired_matrix),
+                              &mouse_face_overwritten_p);
+        }
+
+      /* Find first enabled row.  Optimizations in redisplay_internal
+         may lead to an update with only one row enabled.  There may
+         be also completely empty matrices. */
+      while (row < end && !row->enabled_p)
+        ++row;
+
+      /* Try reusing part of the display by copying. */
+      if (row < end && !w->desired_matrix->no_scrolling_p)
+        {
+          int rc = mc_scrolling_window (w, header_line_row != NULL);
+          if (rc < 0)
+            {
+              /* All rows were found to be equal. */
+              paused_p = 0;
+              goto set_cursor;
+            }
+            else if (rc > 0)
+              {
+                /* We've scrolled the display. */
+                force_p = 1;
+                changed_p = 1;
+              }
+        }
+      /* Process the cursor row at the outset if it is within `desired_matrix`.
+      When processing all other rows, we will query the `w->current_matrix` for data
+      relating to the cursor row.  `make_current` (within `update_window_line')
+      updates the `w->current_matrix` for the applicable row.  In doing so, however,
+      the applicable row in the desired matrix is altered such that we can no longer
+      rely upon the accuracy of `ROW->used[TEXT_AREA]`.  Therefore, we must now rely
+      exclusively upon `w->current_matrix' for cursor row based decisions. */
+      for (struct glyph_row *mc_row = row;
+           mc_row < end && (force_p || !input_pending);
+           ++mc_row)
+        {
+          int vpos = MATRIX_ROW_VPOS (mc_row, w->desired_matrix);
+          if (mc_row->enabled_p
+              && vpos == w->cursor.vpos)
+            {
+              cursor_matrix = w->desired_matrix;
+              if (!force_p && ++n_updated % preempt_count == 0)
+                detect_input_pending_ignore_squeezables ();
+              changed_p |= mc_update_window_line (w, vpos, &mouse_face_overwritten_p,
+                                                  cursor_matrix, essentials, draw_p);
+              if (MATRIX_ROW_BOTTOM_Y (row) >= yb)
+                for (int i = vpos + 1; i < w->current_matrix->nrows - 1; ++i)
+                  SET_MATRIX_ROW_ENABLED_P (w->current_matrix, i, false);
+              break;
+            }
+        }
+      cursor_matrix = w->current_matrix;
+      /* Update the rest of the lines. */
+      for (; row < end && (force_p || !input_pending); ++row)
+        /* scrolling_window resets the enabled_p flag of the rows it reuses from
+        current_matrix. */
+        if (row->enabled_p)
+          {
+            int vpos = MATRIX_ROW_VPOS (row, w->desired_matrix);
+            /* If the `cursor_row` is within the `desired_matrix`, then it was
+            processed hereinabove and should be skipped at this time. */
+            if (vpos == w->cursor.vpos)
+            continue;
+            int i;
+            /* We'll have to play a little bit with when to
+               detect_input_pending.  If it's done too often,
+               scrolling large windows with repeated scroll-up
+               commands will too quickly pause redisplay. */
+            if (!force_p && ++n_updated % preempt_count == 0)
+              detect_input_pending_ignore_squeezables ();
+            changed_p |= mc_update_window_line (w, vpos, &mouse_face_overwritten_p,
+                                                cursor_matrix, essentials, draw_p);
+            /* Mark all rows below the last visible one in the current
+               matrix as invalid.  This is necessary because of
+               variable line heights.  Consider the case of three
+               successive redisplays, where the first displays 5
+               lines, the second 3 lines, and the third 5 lines again.
+               If the second redisplay wouldn't mark rows in the
+               current matrix invalid, the third redisplay might be
+               tempted to optimize redisplay based on lines displayed
+               in the first redisplay. */
+            if (MATRIX_ROW_BOTTOM_Y (row) >= yb)
+              for (i = vpos + 1; i < w->current_matrix->nrows - 1; ++i)
+                SET_MATRIX_ROW_ENABLED_P (w->current_matrix, i, false);
+          }
+      /* Was display preempted? */
+      paused_p = row < end;
+      set_cursor:
+      /* If we jumped here from `set_cursor`, then set the `cursor_matrix`. */
+      if (cursor_matrix == NULL)
+        cursor_matrix = w->current_matrix;
+      /* Reset `row` to 0 so that fake cursors can be drawn on rows preceding the
+      first `row->enabled_p`.  Just prior to the call to `scrolling_window' above,
+      `row` was advanced to the first `row->enabled_p`. */
+      for (struct glyph_row *desired_row = MATRIX_ROW (w->desired_matrix, 0);
+           desired_row < end
+           && (force_p || !input_pending)
+           /* W32 Emacs crashes on startup without a BUFFERP check. */
+           && BUFFERP (w->contents)
+           && (!NILP (BVAR (XBUFFER (w->contents), mc_conf))
+               || !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+               || !NILP (BVAR (XBUFFER (w->contents), fc_visible)));
+           ++desired_row)
+        {
+          int vpos = MATRIX_ROW_VPOS (desired_row, w->desired_matrix);
+          if (desired_row->enabled_p)
+            continue;
+          struct glyph_row *current_row = MATRIX_ROW (w->current_matrix, vpos);
+          enum mc_row_position row_position = mc_row_position (w, current_row, current_row, vpos);
+          if (current_row->enabled_p)
+            mc_draw_row (w, w->current_matrix, current_row, current_row->glyphs[TEXT_AREA],
+                         current_row->x, current_row->used[TEXT_AREA], vpos,
+                         cursor_matrix, essentials, row_position, draw_p,
+                         SET_CURSOR_ONE);
+        }
+
+      mc_restore_glyph_matrix (saved_desired, w->desired_matrix);
+      mc_restore_glyph_matrix (saved_current, w->current_matrix);
+
+      mc_update_window_erase (w, old_matrix);
+
+      mc_xfree_cache_matrix (w, &old_matrix);
+
+    }
+  // clock_t clock_end = clock();
+  // double cpu_time_used = ((double) (clock_end - clock_start)) / CLOCKS_PER_SEC;
+  // fprintf (stderr, "mc_scrolling_window (%s):  TIME (%f)\n", mc_window (w), cpu_time_used);
+}
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 /* Structure to pass dimensions around.  Used for character bounding
    boxes, glyph matrix dimensions and alike.  */
 
@@ -2241,6 +4017,16 @@ free_window_matrices (struct window *w)
 	  free_glyph_matrix (w->current_matrix);
 	  free_glyph_matrix (w->desired_matrix);
 	  w->current_matrix = w->desired_matrix = NULL;
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  mc_xfree_cache_matrix (w, &w->mc_matrix);
+
+/* *************************************************************************** */
+
+
 	}
 
       /* Next window on same level.  */
@@ -3387,6 +5173,26 @@ check_current_matrix_flags (struct window *w)
 static bool
 update_window (struct window *w, bool force_p)
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  if (mc_stderr_p)
+    fprintf (stderr, "update_window (%s)\n", mc_window (w));
+
+  struct mc_essentials essentials;
+  mc_set_essentials (w, &essentials);
+
+  mc_update_window_dryrun (w, force_p, essentials);
+
+  struct glyph_matrix *cursor_matrix = NULL;
+
+  bool draw_p = true;
+
+/* *************************************************************************** */
+
+
   struct glyph_matrix *desired_matrix = w->desired_matrix;
   bool paused_p;
   int preempt_count = clip_to_bounds (1, baud_rate / 2400 + 1, INT_MAX);
@@ -3464,6 +5270,47 @@ update_window (struct window *w, bool force_p)
 	    }
 	}
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  /* Process the cursor row at the outset if it is within `desired_matrix`.
+  When processing all other rows, we will query the `w->current_matrix` for data
+  relating to the cursor row.  `make_current` (within `update_window_line')
+  updates the `w->current_matrix` for the applicable row.  In doing so, however,
+  the applicable row in the desired matrix is altered such that we can no longer
+  rely upon the accuracy of `ROW->used[TEXT_AREA]`.  Therefore, we must now rely
+  exclusively upon `w->current_matrix' for cursor row based decisions. */
+  for (struct glyph_row *mc_row = row;
+       mc_row < end && (force_p || !input_pending);
+       ++mc_row)
+    {
+      int vpos = MATRIX_ROW_VPOS (mc_row, desired_matrix);
+      if (mc_row->enabled_p
+          && vpos == w->cursor.vpos)
+        {
+          cursor_matrix = desired_matrix;
+          if (!force_p && ++n_updated % preempt_count == 0)
+            detect_input_pending_ignore_squeezables ();
+          changed_p |= (BUFFERP (w->contents)
+                        && (!NILP (BVAR (XBUFFER (w->contents), mc_conf))
+                            || !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+                            || ! NILP (BVAR (XBUFFER (w->contents), fc_visible))))
+                       ? mc_update_window_line (w, vpos, &mouse_face_overwritten_p,
+                                                cursor_matrix, essentials, draw_p)
+                       : update_window_line (w, vpos, &mouse_face_overwritten_p);
+          if (MATRIX_ROW_BOTTOM_Y (row) >= yb)
+            for (int i = vpos + 1; i < w->current_matrix->nrows - 1; ++i)
+              SET_MATRIX_ROW_ENABLED_P (w->current_matrix, i, false);
+          break;
+        }
+    }
+
+  cursor_matrix = w->current_matrix;
+
+/* *************************************************************************** */
+
+
       /* Update the rest of the lines.  */
       for (; row < end && (force_p || !input_pending); ++row)
 	/* scrolling_window resets the enabled_p flag of the rows it
@@ -3471,6 +5318,19 @@ update_window (struct window *w, bool force_p)
 	if (row->enabled_p)
 	  {
 	    int vpos = MATRIX_ROW_VPOS (row, desired_matrix);
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+          /* If the `cursor_row` is within the `desired_matrix`, then it was
+          processed hereinabove and should be skipped at this time. */
+          if (vpos == w->cursor.vpos)
+          continue;
+
+/* *************************************************************************** */
+
+
 	    int i;
 
 	    /* We'll have to play a little bit with when to
@@ -3479,8 +5339,21 @@ update_window (struct window *w, bool force_p)
 	       commands will too quickly pause redisplay.  */
 	    if (!force_p && ++n_updated % preempt_count == 0)
 	      detect_input_pending_ignore_squeezables ();
-	    changed_p |= update_window_line (w, vpos,
-					     &mouse_face_overwritten_p);
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+          changed_p |= (BUFFERP (w->contents)
+                        && (!NILP (BVAR (XBUFFER (w->contents), mc_conf))
+                            || !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+                            || ! NILP (BVAR (XBUFFER (w->contents), fc_visible))))
+                       ? mc_update_window_line (w, vpos, &mouse_face_overwritten_p,
+                                                cursor_matrix, essentials, draw_p)
+                       : update_window_line (w, vpos, &mouse_face_overwritten_p);
+
+/* *************************************************************************** */
+
 
 	    /* Mark all rows below the last visible one in the current
 	       matrix as invalid.  This is necessary because of
@@ -3501,6 +5374,41 @@ update_window (struct window *w, bool force_p)
 
     set_cursor:
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  /* If we jumped here from `set_cursor`, then set the `cursor_matrix`. */
+  if (cursor_matrix == NULL)
+    cursor_matrix = w->current_matrix;
+
+  /* Reset `row` to 0 so that fake cursors can be drawn on rows preceding the
+  first `row->enabled_p`.  Just prior to the call to `scrolling_window' above,
+  `row` was advanced to the first `row->enabled_p`. */
+  for (struct glyph_row *desired_row = MATRIX_ROW (desired_matrix, 0);
+       desired_row < end
+       && (force_p || !input_pending)
+       /* W32 Emacs crashes on startup without a BUFFERP check. */
+       && BUFFERP (w->contents)
+       && (!NILP (BVAR (XBUFFER (w->contents), mc_conf))
+           || !NILP (BVAR (XBUFFER (w->contents), crosshairs))
+           || !NILP (BVAR (XBUFFER (w->contents), fc_visible)));
+       ++desired_row)
+    {
+      int vpos = MATRIX_ROW_VPOS (desired_row, desired_matrix);
+      if (desired_row->enabled_p)
+        continue;
+      struct glyph_row *current_row = MATRIX_ROW (w->current_matrix, vpos);
+      enum mc_row_position row_position = mc_row_position (w, current_row, current_row, vpos);
+      if (current_row->enabled_p)
+        mc_draw_row (w, w->current_matrix, current_row, current_row->glyphs[TEXT_AREA],
+                     current_row->x, current_row->used[TEXT_AREA], vpos,
+                     cursor_matrix, essentials, row_position, draw_p, SET_CURSOR_TWO);
+    }
+
+/* *************************************************************************** */
+
+
       /* Update the header line after scrolling because a new header
 	 line would otherwise overwrite lines at the top of the window
 	 that can be scrolled.  */
@@ -3516,7 +5424,49 @@ update_window (struct window *w, bool force_p)
 #ifdef HAVE_WINDOW_SYSTEM
 	  if (changed_p && rif->fix_overlapping_area)
 	    {
-	      redraw_overlapped_rows (w, yb);
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+/* `redraw_overlapped_rows':  Redraw lines from the current matrix of window W
+that are overlapped by other rows.  YB is bottom-most y-position in W.  If rows
+overlapping others have been changed, the rows being overlapped have to be
+redrawn.  This won't draw lines that have already been drawn in update_window
+line because overlapped_p in desired rows is 0, so after row assignment
+overlapped_p in current rows is 0. */
+  struct frame *f = XFRAME (WINDOW_FRAME (w));
+  for (int i = 0; i < w->current_matrix->nrows; ++i)
+    {
+      struct glyph_row *row = w->current_matrix->rows + i;
+      if (!row->enabled_p)
+        break;
+        else if (row->mode_line_p)
+          continue;
+      if (row->overlapped_p)
+        {
+          for (enum glyph_row_area area = LEFT_MARGIN_AREA; area < LAST_AREA; ++area)
+            {
+              output_cursor_to (w, i, 0, row->y, area == TEXT_AREA ? row->x : 0);
+              if (!mc_redraw_row (w, w->current_matrix, row, area, row->x, 0,
+                                  row->used[area], true, DRAW_NORMAL_TEXT,
+                                  UPDATE_WINDOW__REDRAW_OVERLAPPED_ROWS)
+                  && row->used[area])
+                {
+                  FRAME_RIF (f)->write_glyphs (w, row, row->glyphs[area], area,
+                                               row->used[area]);
+                  FRAME_RIF (f)->clear_end_of_line (w, row, area, -1);
+                }
+            }
+          row->overlapped_p = 0;
+        }
+      if (MATRIX_ROW_BOTTOM_Y (row) >= yb)
+        break;
+    }
+
+/* *************************************************************************** */
+
+
 	      redraw_overlapping_rows (w, yb);
 	    }
 #endif
@@ -3536,7 +5486,19 @@ update_window (struct window *w, bool force_p)
 #endif
 
 #ifdef HAVE_WINDOW_SYSTEM
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  if (BUFFERP (w->contents)
+      && !NILP (BVAR (XBUFFER (w->contents), crosshairs)))
+    mc_update_window_fringes (w, 0);
+    else
       update_window_fringes (w, 0);
+
+/* *************************************************************************** */
+
 
       /* End the update of window W.  Don't set the cursor if we
          paused updating the display because in this case,

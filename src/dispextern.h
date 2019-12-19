@@ -145,6 +145,131 @@ typedef void *Emacs_Cursor;
 #define NativeRectangle int
 #endif
 
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+extern bool mc_stderr_p EXTERNALLY_VISIBLE;
+
+struct glyph;
+
+struct glyph_row;
+
+struct glyph_matrix;
+
+enum draw_glyphs_face;
+
+enum glyph_row_area;
+
+struct mc_matrix;
+
+enum mc_cache_type;
+
+enum mc_cursor_type;
+
+enum mc_flavor;
+
+struct mc_RGB;
+
+struct mc_essentials;
+
+enum mc_draw_row_type;
+
+enum mc_engine_type;
+
+enum mc_row_position;
+
+enum mc_redraw_row_type;
+
+enum draw_glyph_action;
+
+extern Lisp_Object mc_listn (ptrdiff_t, Lisp_Object, ...);
+
+extern Lisp_Object mc_nth (int, Lisp_Object);
+
+extern Lisp_Object mc_assq (Lisp_Object, Lisp_Object);
+
+extern enum mc_row_position mc_row_position (struct window *, struct glyph_row *,
+                                             struct glyph_row *, int);
+
+extern ptrdiff_t mc_region_limit (bool);
+
+extern struct glyph * mc_get_cursor_glyph (struct window *, struct glyph_matrix *,
+                                           struct glyph_row *, int, int);
+
+extern void mc_xw_color_values (struct window *, Lisp_Object, struct mc_RGB *);
+
+extern bool mc_update_window_fringes (struct window *, bool);
+
+extern char * mc_window (struct window *);
+
+extern char * mc_char_to_string (int);
+
+extern char * mc_cursor_type_to_string (enum mc_cursor_type);
+
+extern char * mc_flavor_to_string (enum mc_flavor);
+
+extern char * mc_cache_type_to_string (enum mc_cache_type);
+
+extern char * mc_redraw_row_type_to_string (enum mc_redraw_row_type);
+
+extern void mc_cache_inspector (struct window *, struct mc_matrix);
+
+extern bool mc_traverse_cache_p (struct mc_matrix, enum mc_cache_type, int, int);
+
+extern void mc_draw_fringe_bitmap (struct window *, struct glyph_row *, int,
+                                   enum mc_cursor_type);
+
+extern int mc_get_fringe_bitmap (struct window *, Lisp_Object, int, int);
+
+extern void mc_engine (struct window *, struct glyph_matrix *, struct glyph_row *,
+                       struct glyph *, int, int, int, int, int, int,
+                       enum mc_cursor_type, int, struct glyph_matrix *,
+                       struct mc_essentials, enum mc_row_position, struct mc_RGB,
+                       enum mc_engine_type, bool, enum mc_draw_row_type,
+                       enum mc_cache_type);
+
+extern void mc_set_essentials (struct window *, struct mc_essentials *);
+
+extern void mc_draw_row (struct window *, struct glyph_matrix *, struct glyph_row *,
+                         struct glyph *, int, int, int, struct glyph_matrix *,
+                         struct mc_essentials, enum mc_row_position, bool,
+                         enum mc_draw_row_type);
+
+extern bool mc_redraw_row (struct window *, struct glyph_matrix *, struct glyph_row *,
+                           enum glyph_row_area, int, int, int, bool,
+                           enum draw_glyphs_face, enum mc_redraw_row_type);
+
+extern void mc_reset_cache (struct window *);
+
+extern void mc_draw_cursor_glyph (struct window *, struct glyph_matrix *,
+                                  struct glyph_row *, enum draw_glyphs_face,
+                                  int, int, int, struct mc_RGB, enum mc_flavor,
+                                  enum mc_cursor_type, int, bool, bool);
+
+extern void mc_erase_cursor (struct window *, struct glyph_matrix *, struct glyph_row *,
+                             struct mc_matrix, int, int, int, int, enum mc_flavor,
+                             enum mc_cursor_type, int);
+
+extern void mc_draw_erase_hybrid (struct window *, struct glyph_matrix *, struct glyph_row *,
+                                  int, int, int, int, int, int, int, int,
+                                  enum mc_cursor_type, int, struct mc_RGB,
+                                  bool, enum mc_flavor, bool);
+
+extern int mc_draw_glyphs (struct window *, struct glyph_matrix *, struct glyph_row *,
+                           struct mc_matrix, int, enum glyph_row_area, ptrdiff_t,
+                           ptrdiff_t, enum draw_glyphs_face, int, int, struct mc_RGB,
+                           enum mc_flavor, enum mc_cursor_type, int, bool, bool,
+                           enum draw_glyph_action, bool);
+
+extern struct glyph_matrix * mc_save_glyph_matrix (struct glyph_matrix *);
+
+extern void mc_restore_glyph_matrix (struct glyph_matrix *, struct glyph_matrix *);
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 /* Text cursor types.  */
 
 enum text_cursor_kinds
@@ -404,6 +529,18 @@ struct glyph_slice
 
 struct glyph
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  int relative_x, hpos;
+
+  ptrdiff_t bytepos;
+
+/* *************************************************************************** */
+
+
   /* Position from which this glyph was drawn.  If `object' below is a
      Lisp string, this is an index into that string.  If it is a
      buffer, this is a position in that buffer.  In addition, some
@@ -1270,6 +1407,28 @@ enum draw_glyphs_face
 
 struct glyph_string
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+    bool_bf left_overwritten_p : 1;
+
+    bool_bf right_overwritten_p : 1;
+
+    bool_bf rectangle_nuked_p : 1;
+
+    bool_bf background_nuked_p : 1;
+
+    enum draw_glyph_action
+    {
+      MC_DRAW_GLYPH_STRING,
+      MC_ERASE_GLYPH_STRING
+    } action_type;
+
+/* *************************************************************************** */
+
+
   /* X-origin of the string.  */
   int x;
 
@@ -2834,6 +2993,29 @@ typedef void (*frame_parm_handler) (struct frame *, Lisp_Object, Lisp_Object);
 
 struct redisplay_interface
 {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+/* `redisplay_interface' in `nsterm.m` | `w32term.c` | `xterm.c` must be in the
+exact same order as the `redisplay_interface' in `dispextern.h`! */
+
+  /* `mc_ns_draw_window_cursor' | `mc_w32_draw_window_cursor' | `mc_x_draw_window_cursor' */
+  void (*mc_scribe_cursor) (struct window *w, struct glyph_matrix *matrix,
+        struct glyph_row *glyph_row, int x, int fx, int y, int fy, int hpos,
+        int vpos, int wd, int h, struct mc_RGB lsl, enum mc_cursor_type cursor_type,
+        int cursor_width, enum mc_flavor glyph_flavor, bool on_p, bool active_p);
+
+  /* `mc_ns_draw_glyph_string' | `mc_w32_draw_glyph_string' | `mc_x_draw_glyph_string' */
+  void (*mc_scribe_string) (struct glyph_string *s, struct glyph_matrix *matrix,
+        struct glyph_row *row, struct mc_matrix mc_matrix, struct mc_RGB lsl,
+        enum mc_flavor glyph_flavor, enum mc_cursor_type cursor_type, int wd,
+        bool active_p, bool cursor_gc_p);
+
+/* *************************************************************************** */
+
+
   /* Handlers for setting frame parameters.  */
   frame_parm_handler *frame_parm_handlers;
 

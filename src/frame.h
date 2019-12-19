@@ -205,6 +205,16 @@ struct frame
   Lisp_Object tool_bar_items;
   /* tool_bar_items should be the last Lisp_Object member.  */
 
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  /* Non-nil when the frame is in the process of being updated. */
+  struct frame *mc_updating_frame;
+
+/* *************************************************************************** */
+
+
   /* Cache of realized faces.  */
   struct face_cache *face_cache;
 

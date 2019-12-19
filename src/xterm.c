@@ -132,6 +132,907 @@ along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <X11/XKBlib.h>
 #endif
 
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+#ifdef GLYPH_DEBUG
+static void x_check_font (struct frame *, struct font *);
+#endif
+
+static void x_set_mode_line_face_gc (struct glyph_string *);
+
+static void x_set_mouse_face_gc (struct glyph_string *);
+
+static void x_clip_to_row (struct window *, struct glyph_row *, enum glyph_row_area, GC);
+
+static void x_draw_rectangle (struct frame *, GC, int, int, int, int);
+
+static void x_reset_clip_rectangles (struct frame *, GC);
+
+static void x_fill_rectangle (struct frame *, GC, int, int, int, int);
+
+static void x_draw_glyph_string_bg_rect (struct glyph_string *, int, int, int, int);
+
+static void x_set_clip_rectangles (struct frame *, GC, XRectangle *, int);
+
+static void x_set_glyph_string_clipping (struct glyph_string *);
+
+static void x_draw_glyph_string_background (struct glyph_string *, bool);
+
+static void x_draw_glyph_string_box (struct glyph_string *);
+
+static void x_set_glyph_string_clipping_exactly (struct glyph_string *, struct glyph_string *);
+
+static void x_draw_image_glyph_string (struct glyph_string *);
+
+static void x_draw_glyph_string_foreground (struct glyph_string *);
+
+static void x_draw_composite_glyph_string_foreground (struct glyph_string *);
+
+static void x_draw_glyphless_glyph_string_foreground (struct glyph_string *);
+
+static void x_draw_underwave (struct glyph_string *);
+
+/* Decide if color named COLOR_NAME is valid for use on frame F.  If
+   so, return the RGB values in COLOR.  If ALLOC_P,
+   allocate the color.  Value is false if COLOR_NAME is invalid, or
+   no color could be allocated.  */
+bool
+mc_x_defined_color (struct frame *f, const char *color_name, XColor *color, bool alloc_p)
+{
+  bool success_p = false;
+  Colormap cmap = FRAME_X_COLORMAP (f);
+  block_input ();
+#ifdef USE_GTK
+  success_p = xg_check_special_colors (f, color_name, color);
+#endif
+  if (!success_p)
+    success_p = x_parse_color (f, color_name, color) != 0;
+  if (success_p && alloc_p)
+    success_p = x_alloc_nearest_color (f, cmap, color);
+  unblock_input ();
+  return success_p;
+}
+
+void
+mc_xw_color_values (struct window *w, Lisp_Object color, struct mc_RGB *lsl)
+{
+  CHECK_STRING (color);
+  XColor temp;
+  struct frame *f = decode_window_system_frame (w->frame);
+  if (mc_x_defined_color (f, SSDATA (color), &temp, false))
+    {
+      lsl->red = temp.red / 65535.0;
+      lsl->green = temp.green / 65535.0;
+      lsl->blue = temp.blue / 65535.0;
+    }
+  else
+    {
+      lsl->red = -1.0;
+      lsl->green = -1.0;
+      lsl->blue = -1.0;
+    }
+}
+
+/* Set S->gc to a suitable GC for drawing glyph string S in cursor face. */
+static void
+mc_x_set_cursor_gc (struct glyph_string *s, bool cursor_gc_p)
+{
+  if (cursor_gc_p)
+    {
+      s->gc = s->f->output_data.x->cursor_gc;
+      return;
+    }
+  if (s->font == FRAME_FONT (s->f)
+      && s->face->background == FRAME_BACKGROUND_PIXEL (s->f)
+      && s->face->foreground == FRAME_FOREGROUND_PIXEL (s->f)
+      && !s->cmp)
+    s->gc = s->f->output_data.x->cursor_gc;
+  else
+    {
+      /* Cursor on non-default face: must merge. */
+      XGCValues xgcv;
+      unsigned long mask;
+      xgcv.background = s->f->output_data.x->cursor_pixel;
+      xgcv.foreground = s->face->background;
+      /* If the glyph would be invisible, try a different foreground. */
+      if (xgcv.foreground == xgcv.background)
+        xgcv.foreground = s->face->foreground;
+      if (xgcv.foreground == xgcv.background)
+        xgcv.foreground = s->f->output_data.x->cursor_foreground_pixel;
+      if (xgcv.foreground == xgcv.background)
+        xgcv.foreground = s->face->foreground;
+      /* Make sure the cursor is distinct from text in this face. */
+      if (xgcv.background == s->face->background
+          && xgcv.foreground == s->face->foreground)
+        {
+          xgcv.background = s->face->foreground;
+          xgcv.foreground = s->face->background;
+        }
+      IF_DEBUG (x_check_font (s->f, s->font));
+      xgcv.graphics_exposures = False;
+      mask = GCForeground | GCBackground | GCGraphicsExposures;
+      if (FRAME_DISPLAY_INFO (s->f)->scratch_cursor_gc)
+        XChangeGC (FRAME_X_DISPLAY (s->f), FRAME_DISPLAY_INFO (s->f)->scratch_cursor_gc,
+                   mask, &xgcv);
+      else
+        FRAME_DISPLAY_INFO (s->f)->scratch_cursor_gc
+          = XCreateGC (FRAME_X_DISPLAY (s->f), FRAME_X_WINDOW (s->f), mask, &xgcv);
+      s->gc = FRAME_DISPLAY_INFO (s->f)->scratch_cursor_gc;
+    }
+}
+
+/* Set S->gc of glyph string S for drawing that glyph string.  Set
+   S->stippled_p to a non-zero value if the face of S has a stipple pattern. */
+static void
+mc_x_set_glyph_string_gc (struct glyph_string *s, bool cursor_gc_p)
+{
+  prepare_face_for_display (s->f, s->face);
+  if (s->hl == DRAW_NORMAL_TEXT)
+    {
+      s->gc = s->face->gc;
+      s->stippled_p = s->face->stipple != 0;
+    }
+  else if (s->hl == DRAW_INVERSE_VIDEO)
+    {
+      x_set_mode_line_face_gc (s);
+      s->stippled_p = s->face->stipple != 0;
+    }
+  else if (s->hl == DRAW_CURSOR)
+    {
+      mc_x_set_cursor_gc (s, cursor_gc_p);
+      s->stippled_p = false;
+    }
+  else if (s->hl == DRAW_MOUSE_FACE)
+    {
+      x_set_mouse_face_gc (s);
+      s->stippled_p = s->face->stipple != 0;
+    }
+  else if (s->hl == DRAW_IMAGE_RAISED
+           || s->hl == DRAW_IMAGE_SUNKEN)
+    {
+      s->gc = s->face->gc;
+      s->stippled_p = s->face->stipple != 0;
+    }
+  else
+    emacs_abort ();
+  /* GC must have been set. */
+  eassert (s->gc != 0);
+}
+
+/* Draw a hollow box cursor on window W in glyph row ROW. */
+static void
+mc_x_draw_hollow_cursor (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                         int x, int fx, int y, int fy, int hpos, int vpos, int wd, int h)
+{
+  struct frame *f = XFRAME (WINDOW_FRAME (w));
+  struct x_display_info *dpyinfo = FRAME_DISPLAY_INFO (f);
+  Display *dpy = FRAME_X_DISPLAY (f);
+  XGCValues xgcv;
+  GC gc;
+  /* Get the glyph the cursor is on.  If we can't tell because
+     the current matrix is invalid or such, give up. */
+  struct glyph *cursor_glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+  if (cursor_glyph == NULL)
+    return;
+  /* The foreground of cursor_gc is typically the same as the normal
+     background color, which can cause the cursor box to be invisible. */
+  xgcv.foreground = f->output_data.x->cursor_pixel;
+  if (dpyinfo->scratch_cursor_gc)
+    XChangeGC (dpy, dpyinfo->scratch_cursor_gc, GCForeground, &xgcv);
+  else
+    dpyinfo->scratch_cursor_gc = XCreateGC (dpy, FRAME_X_WINDOW (f),
+              GCForeground, &xgcv);
+  gc = dpyinfo->scratch_cursor_gc;
+  /* Set clipping, draw the rectangle, and reset clipping again. */
+  x_clip_to_row (w, row, TEXT_AREA, gc);
+  /* `x_draw_rectangle' needs a WD and H that are 1 pixel less. */
+  int rx = fx;
+  int ry = fy;
+  int rw = wd - 1;
+  int rh = h - 1;
+  x_draw_rectangle (f, gc, rx, ry, rw, rh);
+/*
+  fprintf (stderr, "mc_x_draw_hollow_cursor:  rx (%d) | ry (%d) | rw (%d) | rh (%d)\n",
+                    rx, ry, rw, rh);
+*/
+  x_reset_clip_rectangles (f, gc);
+}
+
+/* Draw a bar cursor on window W in glyph row ROW. */
+static void
+mc_x_draw_bar_cursor (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                      int x, int fx, int y, int fy, int hpos, int vpos, int wd, int h,
+                      int width, enum mc_cursor_type kind, bool cursor_gc_invisible_okay_p)
+{
+  struct frame *f = XFRAME (w->frame);
+  /* If cursor is out of bounds, don't draw garbage.  This can happen
+     in mini-buffer windows when switching between echo area glyphs
+     and mini-buffer. */
+  struct glyph *cursor_glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+  if (cursor_glyph == NULL)
+    return;
+  /* Experimental avoidance of cursor on xwidget. */
+  if (cursor_glyph->type == XWIDGET_GLYPH)
+    return;
+  /* If on an image, draw like a normal cursor.  That's usually better
+     visible than drawing a bar, esp. if the image is large so that
+     the bar might not be in the window. */
+  if (cursor_glyph->type == IMAGE_GLYPH)
+    {
+      struct mc_RGB lsl = {.red = -1.0, .green = -1.0, .blue = -1.0};
+      enum mc_flavor glyph_flavor = NO_FLAVOR;
+      enum mc_cursor_type cursor_type = MC_HOLLOW_BOX;
+      bool active_p = false;
+      bool cursor_gc_p = false;
+      mc_draw_cursor_glyph (w, matrix, row, DRAW_CURSOR, x, hpos, vpos, lsl,
+                            glyph_flavor, cursor_type, wd, active_p, cursor_gc_p);
+    }
+  else
+    {
+      Display *dpy = FRAME_X_DISPLAY (f);
+      Window window = FRAME_X_WINDOW (f);
+      GC gc = FRAME_DISPLAY_INFO (f)->scratch_cursor_gc;
+      unsigned long mask = GCForeground | GCBackground | GCGraphicsExposures;
+      struct face *face = FACE_FROM_ID (f, cursor_glyph->face_id);
+      XGCValues xgcv;
+      /* If the glyph's background equals the color we normally draw
+   the bars cursor in, the bar cursor in its normal color is
+   invisible.  Use the glyph's foreground color instead in this
+   case, on the assumption that the glyph's colors are chosen so
+   that the glyph is legible. */
+      if (face->background == f->output_data.x->cursor_pixel
+          && !cursor_gc_invisible_okay_p)
+        xgcv.background = xgcv.foreground = face->foreground;
+      else
+        xgcv.background = xgcv.foreground = f->output_data.x->cursor_pixel;
+      xgcv.graphics_exposures = False;
+      if (gc)
+        XChangeGC (dpy, gc, mask, &xgcv);
+      else
+        {
+          gc = XCreateGC (dpy, window, mask, &xgcv);
+          FRAME_DISPLAY_INFO (f)->scratch_cursor_gc = gc;
+        }
+      x_clip_to_row (w, row, TEXT_AREA, gc);
+      x_fill_rectangle (f, gc, fx, fy, wd, h);
+      x_reset_clip_rectangles (f, gc);
+    }
+}
+
+/* RIF: Draw cursor on window W. */
+static void
+mc_x_draw_window_cursor (struct window *w, struct glyph_matrix *matrix, struct glyph_row *row,
+                         int x, int fx, int y, int fy, int hpos, int vpos, int wd,
+                         int h, struct mc_RGB lsl, enum mc_cursor_type cursor_type,
+                         int cursor_width, enum mc_flavor glyph_flavor, bool on_p,
+                         bool active_p)
+{
+  struct frame *f = XFRAME (WINDOW_FRAME (w));
+  /* The fringe bitmaps are presently handled elsewhere, but could someday
+  be managed (in part) at this section of code. */
+  if (on_p)
+    {
+      if (row->exact_window_width_line_p
+          && (row->reversed_p
+              ? (hpos < 0)
+              : (hpos >= row->used[TEXT_AREA])))
+        {
+          row->cursor_in_fringe_p = true;
+          mc_draw_fringe_bitmap (w, row, row->reversed_p, cursor_type);
+        }
+      else
+        {
+  Colormap cmap = FRAME_X_COLORMAP (f);
+  unsigned long original_cursor_pixel = f->output_data.x->cursor_pixel;
+  /* xterm.c/xterm.h use GC; whereas, w32term.c/w32term.h use XGCValues * */
+  XGCValues xgcv;
+  XGetGCValues (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, GCForeground, &xgcv);
+  XGetGCValues (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, GCBackground, &xgcv);
+  XColor color;
+  color.red = min (65535, 65535 * lsl.red);
+  color.green = min (65535, 65535 * lsl.green);
+  color.blue = min (65535, 65535 * lsl.blue);
+  /* `x_alloc_nearest_color' sets the `color.pixel`. */
+  x_alloc_nearest_color (f, cmap, &color);
+  switch (cursor_type)
+  {
+    case MC_NO_FRINGE_BITMAP:
+      break;
+    case MC_NO_CURSOR:
+      break;
+    case MC_RIGHT_FRINGE_BITMAP:
+      break;
+    case MC_LEFT_FRINGE_BITMAP:
+      break;
+    case MC_FRAMED_BOX:
+    {
+      struct glyph *cursor_glyph = mc_get_cursor_glyph (w, matrix, row, hpos, vpos);
+      if (cursor_glyph == NULL)
+        return;
+      struct buffer *b = XBUFFER (w->contents);
+      bool region_active_p = (!NILP (Vtransient_mark_mode)
+                              && !NILP (BVAR (b, mark_active)));
+      ptrdiff_t region_beg = (region_active_p) ? mc_region_limit (1) : -1;
+      ptrdiff_t region_end = (region_active_p) ? mc_region_limit (0) : -1;
+      if (cursor_glyph->type != IMAGE_GLYPH && lsl.red >= 0 && lsl.green >= 0 && lsl.blue >= 0)
+        {
+          /* Temporarily hijack `f->output_data.x->cursor_gc' by borrowing the
+          functionality of `x_make_gc' in xfns.c. */
+          if (region_active_p
+              && active_p
+              && cursor_glyph->charpos == region_beg)
+            {
+              enum face_id hollow_active_region_beg_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+              struct face *hollow_active_region_beg_face = FACE_FROM_ID (f, hollow_active_region_beg_face_id);
+              enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+              struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+              XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+              XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_region_beg_face->foreground);
+            }
+            else if (region_active_p
+                     && active_p
+                     && cursor_glyph->charpos == region_end)
+              {
+                enum face_id hollow_active_region_end_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+                struct face *hollow_active_region_end_face = FACE_FROM_ID (f, hollow_active_region_end_face_id);
+                enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+                XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_region_end_face->background);
+              }
+              else if (region_active_p
+                       && active_p
+                       && cursor_glyph->charpos > region_beg
+                       && cursor_glyph->charpos < region_end)
+                {
+                  enum face_id hollow_active_region_between_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-in-region-pre-zv-face"), true);
+                  struct face *hollow_active_region_between_face = FACE_FROM_ID (f, hollow_active_region_between_face_id);
+                  enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                  struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                  XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+                  XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_region_between_face->foreground);
+                }
+                else if (active_p)
+                  {
+                    enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                    struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                    XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+                    XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->background);
+                  }
+                  else if (!active_p)
+                    {
+                      enum face_id hollow_inactive_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-inactive-pre-zv-face"), true);
+                      struct face *hollow_inactive_face = FACE_FROM_ID (f, hollow_inactive_face_id);
+                      XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_inactive_face->foreground);
+                      XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_inactive_face->background);
+                    }
+          block_input ();
+          /* Force `mc_x_set_cursor_gc' to use `s->f->output_data.x->cursor_gc'. */
+          bool cursor_gc_p = true;
+          mc_draw_cursor_glyph (w, matrix, row, DRAW_CURSOR, x, hpos, vpos, lsl,
+                                glyph_flavor, cursor_type, wd, active_p, cursor_gc_p);
+          XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, xgcv.foreground);
+          XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, xgcv.background);
+          unblock_input ();
+          /* Temporarily hijack `f->output_data.x->cursor_pixel'. */
+          f->output_data.x->cursor_pixel = color.pixel;
+          mc_x_draw_hollow_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h);
+          f->output_data.x->cursor_pixel = original_cursor_pixel;
+        }
+        else if (cursor_glyph->type == IMAGE_GLYPH && lsl.red >= 0 && lsl.green >= 0 && lsl.blue >= 0)
+          {
+            /* Temporarily hijack `f->output_data.x->cursor_pixel'. */
+            f->output_data.x->cursor_pixel = color.pixel;
+            mc_x_draw_hollow_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h);
+            f->output_data.x->cursor_pixel = original_cursor_pixel;
+          }
+          else
+            {
+              /* Temporarily hijack `f->output_data.x->cursor_gc' by borrowing the
+              functionality of `x_make_gc' in xfns.c. */
+              if (region_active_p
+                  && active_p
+                  && cursor_glyph->charpos == region_beg)
+                {
+                  enum face_id hollow_active_region_beg_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+                  struct face *hollow_active_region_beg_face = FACE_FROM_ID (f, hollow_active_region_beg_face_id);
+                  enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                  struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                  XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+                  XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_region_beg_face->foreground);
+                }
+                else if (region_active_p
+                         && active_p
+                         && cursor_glyph->charpos == region_end)
+                  {
+                    enum face_id hollow_active_region_end_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-at-region-pre-zv-face"), true);
+                    struct face *hollow_active_region_end_face = FACE_FROM_ID (f, hollow_active_region_end_face_id);
+                    enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                    struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                    XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+                    XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_region_end_face->background);
+                  }
+                  else if (region_active_p
+                           && active_p
+                           && cursor_glyph->charpos > region_beg
+                           && cursor_glyph->charpos < region_end)
+                    {
+                      enum face_id hollow_active_region_between_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-in-region-pre-zv-face"), true);
+                      struct face *hollow_active_region_between_face = FACE_FROM_ID (f, hollow_active_region_between_face_id);
+                      enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                      struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                      XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+                      XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_region_between_face->foreground);
+                    }
+                    else if (active_p)
+                      {
+                        enum face_id hollow_active_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-pre-zv-face"), true);
+                        struct face *hollow_active_face = FACE_FROM_ID (f, hollow_active_face_id);
+                        XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->foreground);
+                        XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_active_face->background);
+                      }
+                      else if (!active_p)
+                        {
+                          enum face_id hollow_inactive_face_id = lookup_named_face (w, f, intern ("+-real-fake-cursor-inactive-pre-zv-face"), true);
+                          struct face *hollow_inactive_face = FACE_FROM_ID (f, hollow_inactive_face_id);
+                          XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_inactive_face->foreground);
+                          XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, hollow_inactive_face->background);
+                        }
+              block_input ();
+              /* Force `mc_x_set_cursor_gc' to use `s->f->output_data.x->cursor_gc'. */
+              bool cursor_gc_p = true;
+              mc_draw_cursor_glyph (w, matrix, row, DRAW_CURSOR, x, hpos, vpos,
+                                    lsl, glyph_flavor, cursor_type, wd, active_p,
+                                    cursor_gc_p);
+              XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, xgcv.foreground);
+              XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, xgcv.background);
+              unblock_input ();
+              /* Draw the frame around the box. */
+              mc_x_draw_hollow_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h);
+            }
+      break;
+    }
+    case MC_HOLLOW_BOX:
+    {
+      if (lsl.red >= 0 && lsl.green >= 0 && lsl.blue >= 0)
+        {
+          /* Temporarily hijack `f->output_data.x->cursor_pixel'. */
+          f->output_data.x->cursor_pixel = color.pixel;
+          mc_x_draw_hollow_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h);
+          f->output_data.x->cursor_pixel = original_cursor_pixel;
+        }
+        else
+          mc_x_draw_hollow_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h);
+      break;
+    }
+    case MC_FILLED_BOX:
+    {
+      if (lsl.red >= 0 && lsl.green >= 0 && lsl.blue >= 0)
+        /* Temporarily hijack `f->output_data.x->cursor_gc' by borrowing the
+        functionality of `x_make_gc' in xfns.c. */
+        {
+          block_input ();
+          XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, FRAME_BACKGROUND_PIXEL (f));
+          XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, color.pixel);
+          /* Force `mc_x_set_cursor_gc' to use `s->f->output_data.x->cursor_gc'. */
+          bool cursor_gc_p = true;
+          mc_draw_cursor_glyph (w, matrix, row, DRAW_CURSOR, x, hpos, vpos, lsl,
+                                glyph_flavor, cursor_type, wd, active_p, cursor_gc_p);
+          XSetForeground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, xgcv.foreground);
+          XSetBackground (FRAME_X_DISPLAY (f), f->output_data.x->cursor_gc, xgcv.background);
+          unblock_input ();
+        }
+        else
+          {
+            bool cursor_gc_p = false;
+            mc_draw_cursor_glyph (w, matrix, row, DRAW_CURSOR, x, hpos, vpos, lsl,
+                                  glyph_flavor, cursor_type, wd, active_p, cursor_gc_p);
+          }
+      break;
+    }
+    case MC_BAR:
+    {
+      if (lsl.red >= 0 && lsl.green >= 0 && lsl.blue >= 0)
+        {
+          /* Temporarily hijack `f->output_data.x->cursor_pixel'. */
+          f->output_data.x->cursor_pixel = color.pixel;
+          bool cursor_gc_invisible_okay_p = true;
+          mc_x_draw_bar_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h,
+                                cursor_width, MC_BAR, cursor_gc_invisible_okay_p);
+          f->output_data.x->cursor_pixel = original_cursor_pixel;
+        }
+        else
+          {
+            bool cursor_gc_invisible_okay_p = false;
+            mc_x_draw_bar_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd,
+                                  h, cursor_width, MC_BAR, cursor_gc_invisible_okay_p);
+          }
+      break;
+    }
+    case MC_HBAR:
+    {
+      if (lsl.red >= 0 && lsl.green >= 0 && lsl.blue >= 0)
+        {
+          /* Temporarily hijack `f->output_data.x->cursor_pixel'. */
+          f->output_data.x->cursor_pixel = color.pixel;
+          bool cursor_gc_invisible_okay_p = true;
+          mc_x_draw_bar_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd, h,
+                                cursor_width, MC_HBAR, cursor_gc_invisible_okay_p);
+          f->output_data.x->cursor_pixel = original_cursor_pixel;
+        }
+        else
+          {
+            bool cursor_gc_invisible_okay_p = false;
+            mc_x_draw_bar_cursor (w, matrix, row, x, fx, y, fy, hpos, vpos, wd,
+                                  h, cursor_width, MC_HBAR, cursor_gc_invisible_okay_p);
+          }
+      break;
+    }
+    default:
+      emacs_abort ();
+  }
+        }
+#ifdef HAVE_X_I18N
+  if (w == XWINDOW (f->selected_window))
+    if (FRAME_XIC (f) && (FRAME_XIC_STYLE (f) & XIMPreeditPosition))
+      xic_set_preeditarea (w, x, y);
+#endif
+    }
+  XFlush (FRAME_X_DISPLAY (f));
+}
+
+/* Draw stretch glyph string S. */
+static void
+mc_x_draw_stretch_glyph_string (struct glyph_string *s)
+{
+  eassert (s->first_glyph->type == STRETCH_GLYPH);
+  if (s->hl == DRAW_CURSOR
+      && !x_stretch_cursor_p)
+    {
+      /* If `x-stretch-cursor' is nil, don't draw a block cursor as wide as the
+      stretch glyph. */
+      int width, background_width = s->background_width;
+      int x = s->x;
+      if (!s->row->reversed_p)
+        {
+          int left_x = window_box_left_offset (s->w, TEXT_AREA);
+          if (x < left_x)
+            {
+              background_width -= left_x - x;
+              x = left_x;
+            }
+        }
+        else
+          {
+            /* In R2L rows, draw the cursor on the right edge of the
+               stretch glyph. */
+            int right_x = window_box_right (s->w, TEXT_AREA);
+            if (x + background_width > right_x)
+              background_width -= x - right_x;
+            x += background_width;
+          }
+      width = min (FRAME_COLUMN_WIDTH (s->f), background_width);
+      if (s->row->reversed_p)
+        x -= width;
+      /* Draw cursor. */
+      x_draw_glyph_string_bg_rect (s, x, s->y, width, s->height);
+      /* Clear rest using the GC of the original non-cursor face. */
+      if (width < background_width)
+        {
+          int y = s->y;
+          int w = background_width - width, h = s->height;
+          XRectangle r;
+          GC gc;
+          if (!s->row->reversed_p)
+            x += width;
+          else
+            x = s->x;
+          if (s->row->mouse_face_p
+              && cursor_in_mouse_face_p (s->w))
+            {
+              x_set_mouse_face_gc (s);
+              gc = s->gc;
+            }
+          else
+            gc = s->face->gc;
+          get_glyph_string_clip_rect (s, &r);
+          x_set_clip_rectangles (s->f, gc, &r, 1);
+          if (s->face->stipple)
+            {
+              /* Fill background with a stipple pattern. */
+              XSetFillStyle (FRAME_X_DISPLAY (s->f), gc, FillOpaqueStippled);
+              x_fill_rectangle (s->f, gc, x, y, w, h);
+              XSetFillStyle (FRAME_X_DISPLAY (s->f), gc, FillSolid);
+            }
+          else
+            {
+              XGCValues xgcv;
+              XGetGCValues (FRAME_X_DISPLAY (s->f), gc, GCForeground | GCBackground, &xgcv);
+              XSetForeground (FRAME_X_DISPLAY (s->f), gc, xgcv.background);
+              x_fill_rectangle (s->f, gc, x, y, w, h);
+              XSetForeground (FRAME_X_DISPLAY (s->f), gc, xgcv.foreground);
+            }
+          x_reset_clip_rectangles (s->f, gc);
+        }
+    }
+  else if (!s->background_filled_p)
+    {
+      int background_width = s->background_width;
+      int x = s->x, left_x = window_box_left_offset (s->w, TEXT_AREA);
+      /* Don't draw into left margin, fringe or scrollbar area
+         except for header line and mode line. */
+      if (x < left_x && !s->row->mode_line_p)
+        {
+          background_width -= left_x - x;
+          x = left_x;
+        }
+      if (background_width > 0)
+        x_draw_glyph_string_bg_rect (s, x, s->y, background_width, s->height);
+    }
+  s->background_filled_p = true;
+}
+
+/* Draw glyph string S.  The `mc_matrix` is reserved for future use when erasing
+   fake cursors during `mc_update_window_erase' and redrawing fake cursors on
+   left/right overwritten glyphs. */
+static void
+mc_x_draw_glyph_string (struct glyph_string *s, struct glyph_matrix *matrix,
+                        struct glyph_row *row, struct mc_matrix mc_matrix,
+                        struct mc_RGB lsl, enum mc_flavor glyph_flavor,
+                        enum mc_cursor_type cursor_type, int cursor_width,
+                        bool active_p, bool cursor_gc_p)
+{
+  bool relief_drawn_p = false;
+  /* If S draws into the background of its successors, draw the
+     background of the successors first so that S can draw into it.
+     This makes S->next use XDrawString instead of XDrawImageString. */
+  if (s->next && s->right_overhang && !s->for_overlaps)
+    {
+      int width;
+      struct glyph_string *next;
+      for (width = 0, next = s->next;
+           next && width < s->right_overhang;
+           width += next->width, next = next->next)
+        if (next->first_glyph->type != IMAGE_GLYPH)
+          {
+            mc_x_set_glyph_string_gc (next, cursor_gc_p);
+            x_set_glyph_string_clipping (next);
+            if (next->first_glyph->type == STRETCH_GLYPH)
+              mc_x_draw_stretch_glyph_string (next);
+            else
+              x_draw_glyph_string_background (next, true);
+            next->num_clips = 0;
+          }
+    }
+  /* Set up S->gc, set clipping and draw S. */
+  mc_x_set_glyph_string_gc (s, cursor_gc_p);
+  /* Draw relief (if any) in advance for char/composition so that the
+     glyph string can be drawn over it. */
+  if (!s->for_overlaps
+      && s->face->box != FACE_NO_BOX
+      && (s->first_glyph->type == CHAR_GLYPH
+          || s->first_glyph->type == COMPOSITE_GLYPH))
+    {
+      x_set_glyph_string_clipping (s);
+      x_draw_glyph_string_background (s, true);
+      x_draw_glyph_string_box (s);
+      x_set_glyph_string_clipping (s);
+      relief_drawn_p = true;
+    }
+    else if (!s->clip_head /* draw_glyphs didn't specify a clip mask. */
+             && !s->clip_tail
+             && ((s->prev && s->prev->hl != s->hl && s->left_overhang)
+                 || (s->next && s->next->hl != s->hl && s->right_overhang)))
+      /* We must clip just this glyph.  left_overhang part has already
+         drawn when s->prev was drawn, and right_overhang part will be
+         drawn later when s->next is drawn. */
+      x_set_glyph_string_clipping_exactly (s, s);
+      else
+        x_set_glyph_string_clipping (s);
+  switch (s->first_glyph->type)
+    {
+    case IMAGE_GLYPH:
+      x_draw_image_glyph_string (s);
+      break;
+    case XWIDGET_GLYPH:
+      x_draw_xwidget_glyph_string (s);
+      break;
+    case STRETCH_GLYPH:
+      mc_x_draw_stretch_glyph_string (s);
+      break;
+    case CHAR_GLYPH:
+      if (s->for_overlaps)
+        s->background_filled_p = true;
+      else
+        x_draw_glyph_string_background (s, false);
+      x_draw_glyph_string_foreground (s);
+      break;
+    case COMPOSITE_GLYPH:
+      if (s->for_overlaps || (s->cmp_from > 0
+                              && ! s->first_glyph->u.cmp.automatic))
+        s->background_filled_p = true;
+      else
+        x_draw_glyph_string_background (s, true);
+      x_draw_composite_glyph_string_foreground (s);
+      break;
+    case GLYPHLESS_GLYPH:
+      if (s->for_overlaps)
+        s->background_filled_p = true;
+      else
+        x_draw_glyph_string_background (s, true);
+      x_draw_glyphless_glyph_string_foreground (s);
+      break;
+    default:
+      emacs_abort ();
+    }
+  if (!s->for_overlaps)
+    {
+      /* Draw underline. */
+      if (s->face->underline_p)
+        {
+          if (s->face->underline_type == FACE_UNDER_WAVE)
+            {
+              if (s->face->underline_defaulted_p)
+                x_draw_underwave (s);
+              else
+                {
+                  XGCValues xgcv;
+                  XGetGCValues (FRAME_X_DISPLAY (s->f), s->gc, GCForeground, &xgcv);
+                  XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, s->face->underline_color);
+                  x_draw_underwave (s);
+                  XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, xgcv.foreground);
+                }
+            }
+          else if (s->face->underline_type == FACE_UNDER_LINE)
+            {
+              unsigned long thickness, position;
+              int y;
+              if (s->prev && s->prev->face->underline_p
+                  && s->prev->face->underline_type == FACE_UNDER_LINE)
+                {
+                  /* We use the same underline style as the previous one. */
+                  thickness = s->prev->underline_thickness;
+                  position = s->prev->underline_position;
+                }
+              else
+                {
+                  /* Get the underline thickness.  Default is 1 pixel. */
+                  if (s->font && s->font->underline_thickness > 0)
+                    thickness = s->font->underline_thickness;
+                  else
+                    thickness = 1;
+                  if (x_underline_at_descent_line)
+                    position = (s->height - thickness) - (s->ybase - s->y);
+                  else
+                    {
+                      /* Get the underline position.  This is the recommended
+                         vertical offset in pixels from the baseline to the top of
+                         the underline.  This is a signed value according to the
+                         specs, and its default is
+                         ROUND ((maximum descent) / 2), with
+                         ROUND(x) = floor (x + 0.5)  */
+                      if (x_use_underline_position_properties
+                          && s->font && s->font->underline_position >= 0)
+                        position = s->font->underline_position;
+                      else if (s->font)
+                        position = (s->font->descent + 1) / 2;
+                      else
+                        position = underline_minimum_offset;
+                    }
+                  position = max (position, underline_minimum_offset);
+                }
+              /* Check the sanity of thickness and position.  We should
+                 avoid drawing underline out of the current line area. */
+              if (s->y + s->height <= s->ybase + position)
+                position = (s->height - 1) - (s->ybase - s->y);
+              if (s->y + s->height < s->ybase + position + thickness)
+                thickness = (s->y + s->height) - (s->ybase + position);
+              s->underline_thickness = thickness;
+              s->underline_position = position;
+              y = s->ybase + position;
+              if (s->face->underline_defaulted_p)
+                x_fill_rectangle (s->f, s->gc, s->x, y, s->width, thickness);
+              else
+                {
+                  XGCValues xgcv;
+                  XGetGCValues (FRAME_X_DISPLAY (s->f), s->gc, GCForeground, &xgcv);
+                  XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, s->face->underline_color);
+                  x_fill_rectangle (s->f, s->gc, s->x, y, s->width, thickness);
+                  XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, xgcv.foreground);
+                }
+            }
+        }
+      /* Draw overline. */
+      if (s->face->overline_p)
+        {
+          unsigned long dy = 0, h = 1;
+          if (s->face->overline_color_defaulted_p)
+            x_fill_rectangle (s->f, s->gc, s->x, s->y + dy, s->width, h);
+          else
+            {
+              XGCValues xgcv;
+              XGetGCValues (FRAME_X_DISPLAY (s->f), s->gc, GCForeground, &xgcv);
+              XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, s->face->overline_color);
+              x_fill_rectangle (s->f, s->gc, s->x, s->y + dy, s->width, h);
+              XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, xgcv.foreground);
+            }
+        }
+      /* Draw strike-through. */
+      if (s->face->strike_through_p)
+        {
+          unsigned long h = 1;
+          unsigned long dy = (s->height - h) / 2;
+          if (s->face->strike_through_color_defaulted_p)
+            x_fill_rectangle (s->f, s->gc, s->x, s->y + dy, s->width, h);
+          else
+            {
+              XGCValues xgcv;
+              XGetGCValues (FRAME_X_DISPLAY (s->f), s->gc, GCForeground, &xgcv);
+              XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, s->face->strike_through_color);
+              x_fill_rectangle (s->f, s->gc, s->x, s->y + dy, s->width, h);
+              XSetForeground (FRAME_X_DISPLAY (s->f), s->gc, xgcv.foreground);
+            }
+        }
+      /* Draw relief if not yet drawn. */
+      if (!relief_drawn_p && s->face->box != FACE_NO_BOX)
+          x_draw_glyph_string_box (s);
+      if (s->prev)
+        {
+          struct glyph_string *prev;
+          for (prev = s->prev; prev; prev = prev->prev)
+            if (prev->hl != s->hl
+                && prev->x + prev->width + prev->right_overhang > s->x)
+              {
+                /* As prev was drawn while clipped to its own area, we
+                   must draw the right_overhang part using s->hl now. */
+                enum draw_glyphs_face save = prev->hl;
+                prev->hl = s->hl;
+                mc_x_set_glyph_string_gc (prev, cursor_gc_p);
+                x_set_glyph_string_clipping_exactly (s, prev);
+                if (prev->first_glyph->type == CHAR_GLYPH)
+                  x_draw_glyph_string_foreground (prev);
+                else
+                  x_draw_composite_glyph_string_foreground (prev);
+                x_reset_clip_rectangles (prev->f, prev->gc);
+                prev->hl = save;
+                prev->num_clips = 0;
+              }
+        }
+      if (s->next)
+        {
+          struct glyph_string *next;
+          for (next = s->next; next; next = next->next)
+            if (next->hl != s->hl
+                && next->x - next->left_overhang < s->x + s->width)
+              {
+                /* As next will be drawn while clipped to its own area,
+                   we must draw the left_overhang part using s->hl now. */
+                enum draw_glyphs_face save = next->hl;
+                next->hl = s->hl;
+                mc_x_set_glyph_string_gc (next, cursor_gc_p);
+                x_set_glyph_string_clipping_exactly (s, next);
+                if (next->first_glyph->type == CHAR_GLYPH)
+                  x_draw_glyph_string_foreground (next);
+                else
+                  x_draw_composite_glyph_string_foreground (next);
+                x_reset_clip_rectangles (next->f, next->gc);
+                next->hl = save;
+                next->num_clips = 0;
+                next->clip_head = s->next;
+              }
+        }
+    }
+  /* Reset clipping. */
+  x_reset_clip_rectangles (s->f, s->gc);
+  s->num_clips = 0;
+}
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
 /* Default to using XIM if available.  */
 #ifdef USE_XIM
 bool use_xim = true;
@@ -1109,6 +2010,16 @@ static void
 x_update_begin (struct frame *f)
 {
   /* Nothing to do.  */
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  f->mc_updating_frame = f;
+
+/* *************************************************************************** */
+
+
 }
 
 /* Draw a vertical window border from (x,y0) to (x,y1)  */
@@ -1254,6 +2165,16 @@ x_update_end (struct frame *f)
   XFlush (FRAME_X_DISPLAY (f));
   unblock_input ();
 #endif
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+  f->mc_updating_frame = NULL;
+
+/* *************************************************************************** */
+
+
 }
 
 /* This function is called from various places in xdisp.c
@@ -13238,6 +14159,20 @@ extern frame_parm_handler x_frame_parm_handlers[];
 
 static struct redisplay_interface x_redisplay_interface =
   {
+
+
+/* *************************************************************************** */
+/* MULTIPLE-CURSORS */
+
+/* `redisplay_interface' in `xterm.c` must be in the exact same order as the
+`redisplay_interface' in `dispextern.h`! */
+
+  mc_x_draw_window_cursor,
+  mc_x_draw_glyph_string,
+
+/* *************************************************************************** */
+
+
     x_frame_parm_handlers,
     gui_produce_glyphs,
     gui_write_glyphs,

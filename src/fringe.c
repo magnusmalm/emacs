@@ -437,8 +437,462 @@ static unsigned short empty_line_bits[] = {
 #define STANDARD_BITMAP_HEIGHT(bits) (sizeof (bits)/BYTES_PER_BITMAP_ROW)
 #define FRBITS(bits)  bits, STANDARD_BITMAP_HEIGHT (bits)
 
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+/* `+-fringe-helper-decimal' defined in `crosshairs.el` */
+
+/* TODO:  Consider adding the following fringe bitmaps:
+  (define-fringe-bitmap 'breakpoint "\x3c\x7e\xff\xff\xff\xff\x7e\x3c")
+  (define-fringe-bitmap 'hollow-right-triangle "\xe0\x90\x88\x84\x84\x88\x90\xe0") */
+
+/* 24
+    (+-fringe-helper-hexadecimal
+      "x......."
+      "x......."
+      "x......."
+      "x..xx..."
+      "x...xx.."
+      "x....xx."
+      "x.xxxxxx"
+      "x.xxxxxx"
+      "x....xx."
+      "x...xx.."
+      "x..xx..."
+      "x......."
+      "x......."
+      "x.......")
+*/
+static unsigned short mc_vertical_bar_right_arrow_bits[] ={
+  0x80, 0x80, 0x80, 0x98, 0x8c, 0x86, 0xbf,
+  0xbf, 0x86, 0x8c, 0x98, 0x80, 0x80, 0x80};
+
+/* 25
+    (+-fringe-helper-hexadecimal
+      "......xx"
+      "......xx"
+      "......xx"
+      ".xx...xx"
+      "..xx..xx"
+      "...xx.xx"
+      "xxxxxxxx"
+      "xxxxxxxx"
+      "...xx.xx"
+      "..xx..xx"
+      ".xx...xx"
+      "......xx"
+      "......xx"
+      "......xx")
+*/
+static unsigned short mc_reversed_vertical_bar_right_arrow_bits[] ={
+  0x3, 0x3, 0x3, 0x63, 0x33, 0x1b, 0xff, 0xff, 0x1b, 0x33, 0x63, 0x3, 0x3, 0x3};
+
+/* 26
+    (+-fringe-helper-hexadecimal
+      "xxxxxxxx"
+      "x......x"
+      "x......x"
+      "x..xx..x"
+      "x...xx.x"
+      "x....xxx"
+      "x.xxxxxx"
+      "x.xxxxxx"
+      "x....xxx"
+      "x...xx.x"
+      "x..xx..x"
+      "x......x"
+      "x......x"
+      "xxxxxxxx")
+*/
+static unsigned short mc_hollow_rectangle_right_arrow_bits[] ={
+  0xff, 0x81, 0x81, 0x99, 0x8d, 0x87, 0xbf,
+  0xbf, 0x87, 0x8d, 0x99, 0x81, 0x81, 0xff};
+
+/* 27
+    (+-fringe-helper-hexadecimal
+      "xxxxxxxx"
+      "x.....xx"
+      "x.....xx"
+      "x.xx..xx"
+      "x..xx.xx"
+      "x...xxxx"
+      "xxxxxxxx"
+      "xxxxxxxx"
+      "x...xxxx"
+      "x..xx.xx"
+      "x.xx..xx"
+      "x.....xx"
+      "x.....xx"
+      "xxxxxxxx")
+*/
+static unsigned short mc_reversed_hollow_rectangle_right_arrow_bits[] ={
+  0xff, 0x81, 0x81, 0xb1, 0x99, 0x8d, 0xff,
+  0xff, 0x8d, 0x99, 0xb1, 0x81, 0x81, 0xff};
+
+/* 28
+    (+-fringe-helper-hexadecimal
+      "xxxxxxxx"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "x......x"
+      "xxxxxxxx")
+*/
+static unsigned short mc_hollow_rectangle_bits[] ={
+  0xff, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81,
+  0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xff};
+
+/* 29
+    (+-fringe-helper-hexadecimal
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x......."
+      "x.......")
+*/
+static unsigned short mc_vertical_bar_bits[] ={
+  0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+  0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80};
+
+/* 30
+    (+-fringe-helper-hexadecimal
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx"
+      "......xx")
+*/
+static unsigned short mc_reversed_vertical_bar_bits[] ={
+  0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3};
+
+/* 31
+    (+-fringe-helper-hexadecimal
+      "xx......"
+      "xx......"
+      " xx....."
+      ".xx....."
+      "..xx...."
+      "..xx...."
+      "...xx..."
+      "...xx..."
+      "....xx.."
+      "....xx.."
+      ".....xx."
+      ".....xx."
+      "......xx"
+      "......xx")
+*/
+static unsigned short mc_backslash_bits[] ={
+  0xc0, 0xc0, 0xe0, 0x60, 0x30, 0x30, 0x18, 0x18, 0xc, 0xc, 0x6, 0x6, 0x3, 0x3};
+
+/* 32
+    (+-fringe-helper-hexadecimal
+      "xx......"
+      "xx......"
+      "xxx....."
+      "xxx....."
+      "x.xx...."
+      "x.xx...."
+      "x..xx..."
+      "x..xx..."
+      "x...xx.."
+      "x...xx.."
+      "x....xx."
+      "x....xx."
+      "x.....xx"
+      "x.....xx")
+*/
+static unsigned short mc_vertical_bar_backslash_bits[] ={
+  0xc0, 0xc0, 0xe0, 0xe0, 0xb0, 0xb0, 0x98,
+  0x98, 0x8c, 0x8c, 0x86, 0x86, 0x83, 0x83};
+
+/* 33
+    (+-fringe-helper-hexadecimal
+      ".xxxxxx."
+      "xxxx.x.."
+      "xxxx.x.."
+      "xxxx.x.."
+      ".xxx.x.."
+      "...x.x.."
+      "...x.x.."
+      "...x.x.."
+      "...x.x.."
+      "...x.x.."
+      "...x.x..")
+*/
+static unsigned short mc_pilcrow_bits[] ={
+  0x7e, 0xf4, 0xf4, 0xf4, 0x74, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14};
+
+/* 34
+    (+-fringe-helper-hexadecimal
+      "..xxxx.."
+      ".xxxxxx."
+      "x..xx..x"
+      "x..xx..x"
+      "xxxxxxxx"
+      "xx....xx"
+      "xxx..xxx"
+      ".xxxxxx."
+      "..xxxx..")
+*/
+static unsigned short mc_smiley_face_bits[] ={
+  0x3c, 0x7e, 0x99, 0x99, 0xff, 0xc3, 0xe7, 0x7e, 0x3c};
+
+/* 35
+    (+-fringe-helper-hexadecimal
+      "..x....."
+      "...x...."
+      "....x..."
+      ".....x.."
+      "....x..."
+      "...x...."
+      "..x.....")
+*/
+static unsigned short mc_single_angle_right_bits[] ={
+  0x20, 0x10, 0x8, 0x4, 0x8, 0x10, 0x20};
+
+/* 36
+    (+-fringe-helper-hexadecimal
+      ".....x.."
+      "....x..."
+      "...x...."
+      "..x....."
+      "...x...."
+      "....x..."
+      ".....x..")
+*/
+static unsigned short mc_single_angle_left_bits[] ={
+  0x4, 0x8, 0x10, 0x20, 0x10, 0x8, 0x4};
+
+/* 37
+    (+-fringe-helper-hexadecimal
+      "xx.xx..."
+      ".xx.xx.."
+      "..xx.xx."
+      "...xx.xx"
+      "..xx.xx."
+      ".xx.xx.."
+      "xx.xx...")
+*/
+static unsigned short mc_double_angle_right_bits[] ={
+  0xd8, 0x6c, 0x36, 0x1b, 0x36, 0x6c, 0xd8};
+
+/* 38
+    (+-fringe-helper-hexadecimal
+      "...xx.xx"
+      "..xx.xx."
+      ".xx.xx.."
+      "xx.xx..."
+      ".xx.xx.."
+      "..xx.xx."
+      "...xx.xx")
+*/
+static unsigned short mc_double_angle_left_bits[] ={
+  0x1b, 0x36, 0x6c, 0xd8, 0x6c, 0x36, 0x1b};
+
+/* 39
+    (+-fringe-helper-hexadecimal
+      "x.x.x..."
+      ".x.x.x.."
+      "..x.x.x."
+      "...x.x.x"
+      "..x.x.x."
+      ".x.x.x.."
+      "x.x.x...")
+*/
+static unsigned short mc_triple_angle_right_bits[] ={
+  0xa8, 0x54, 0x2a, 0x15, 0x2a, 0x54, 0xa8};
+
+/* 40
+    (+-fringe-helper-hexadecimal
+      "...x.x.x"
+      "..x.x.x."
+      ".x.x.x.."
+      "x.x.x..."
+      ".x.x.x.."
+      "..x.x.x."
+      "...x.x.x")
+*/
+static unsigned short mc_triple_angle_left_bits[] ={
+  0x15, 0x2a, 0x54, 0xa8, 0x54, 0x2a, 0x15};
+
+/* 41
+    (+-fringe-helper-hexadecimal
+      "........"
+      "........"
+      "........"
+      "........"
+      "...x...."
+      "..x.x..."
+      ".x...x.."
+      "x.....x."
+      "........"
+      "........"
+      "........"
+      "........")
+*/
+static unsigned short mc_single_angle_up_bits[] ={
+  0x00, 0x00, 0x00, 0x00, 0x10, 0x28, 0x44, 0x82, 0x00, 0x00, 0x00, 0x00};
+
+/* 42
+    (+-fringe-helper-hexadecimal
+      "........"
+      "........"
+      "........"
+      "........"
+      "x.....x."
+      ".x...x.."
+      "..x.x..."
+      "...x...."
+      "........"
+      "........"
+      "........"
+      "........")
+*/
+static unsigned short mc_single_angle_down_bits[] ={
+  0x00, 0x00, 0x00, 0x00, 0x82, 0x44, 0x28, 0x10, 0x00, 0x00, 0x00, 0x00};
+
+/* 43
+    (+-fringe-helper-hexadecimal
+      "........"
+      "........"
+      "........"
+      "...x...."
+      "..x.x..."
+      ".x...x.."
+      "x..x..x."
+      "..x.x..."
+      ".x...x.."
+      "x.....x."
+      "........"
+      "........"
+      "........")
+*/
+static unsigned short mc_double_angle_up_bits[] ={
+  0x00, 0x00, 0x00, 0x10, 0x28, 0x44, 0x92, 0x28, 0x44, 0x82, 0x00, 0x00, 0x00};
+
+/* 44
+    (+-fringe-helper-hexadecimal
+      "........"
+      "........"
+      "........"
+      "x.....x."
+      ".x...x.."
+      "..x.x..."
+      "x..x..x."
+      ".x...x.."
+      "..x.x..."
+      "...x...."
+      "........"
+      "........"
+      "........")
+*/
+static unsigned short mc_double_angle_down_bits[] ={
+  0x00, 0x00, 0x00, 0x82, 0x44, 0x28, 0x92, 0x44, 0x28, 0x10, 0x00, 0x00, 0x00};
+
+/* 45
+    (+-fringe-helper-hexadecimal
+      "........"
+      "...x...."
+      "..x.x..."
+      ".x...x.."
+      "x..x..x."
+      "..x.x..."
+      ".x...x.."
+      "x..x..x."
+      "..x.x..."
+      ".x...x.."
+      "x.....x."
+      "........")
+*/
+static unsigned short mc_triple_angle_up_bits[] ={
+  0x00, 0x10, 0x28, 0x44, 0x92, 0x28, 0x44, 0x92, 0x28, 0x44, 0x82, 0x00};
+
+/* 46
+    (+-fringe-helper-hexadecimal
+      "........"
+      "x.....x."
+      ".x...x.."
+      "..x.x..."
+      "x..x..x."
+      ".x...x.."
+      "..x.x..."
+      "x..x..x."
+      ".x...x.."
+      "..x.x..."
+      "...x...."
+      "........")
+*/
+static unsigned short mc_quadruple_angle_down_bits[] ={
+  0x00, 0x82, 0x44, 0x28, 0x92, 0x44, 0x28, 0x92, 0x44, 0x28, 0x10, 0x00};
+
+/* 47
+    (+-fringe-helper-hexadecimal
+      "...x...."
+      "..x.x..."
+      ".x...x.."
+      "x..x..x."
+      "..x.x..."
+      ".x...x.."
+      "x..x..x."
+      "..x.x..."
+      ".x...x.."
+      "x..x..x."
+      "..x.x..."
+      ".x...x.."
+      "x.....x.")
+*/
+static unsigned short mc_quadruple_angle_up_bits[] ={
+  0x10, 0x28, 0x44, 0x92, 0x28, 0x44, 0x92, 0x28, 0x44, 0x92, 0x28, 0x44, 0x82};
+
+/* 48
+    (+-fringe-helper-hexadecimal
+      "x.....x."
+      ".x...x.."
+      "..x.x..."
+      "x..x..x."
+      ".x...x.."
+      "..x.x..."
+      "x..x..x."
+      ".x...x.."
+      "..x.x..."
+      "x..x..x."
+      ".x...x.."
+      "..x.x..."
+      "...x....")
+*/
+static unsigned short mc_triple_angle_down_bits[] ={
+  0x82, 0x44, 0x28, 0x92, 0x44, 0x28, 0x92, 0x44, 0x28, 0x92, 0x44, 0x28, 0x10};
+
 /* NOTE:  The order of these bitmaps must match the sequence
-   used in fringe.el to define the corresponding symbols.  */
+   used in fringe.el to define the corresponding symbols. */
 
 static struct fringe_bitmap standard_bitmaps[] =
 {
@@ -466,7 +920,1071 @@ static struct fringe_bitmap standard_bitmaps[] =
   { FRBITS (vertical_bar_bits),       8, 0, ALIGN_BITMAP_CENTER, 0 },
   { FRBITS (horizontal_bar_bits),     8, 0, ALIGN_BITMAP_BOTTOM, 0 },
   { FRBITS (empty_line_bits),         8, 3, ALIGN_BITMAP_TOP,    0 },
+
+  /* 24 */
+  {FRBITS (mc_vertical_bar_right_arrow_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 25 */
+  {FRBITS (mc_reversed_vertical_bar_right_arrow_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 26 */
+  {FRBITS (mc_hollow_rectangle_right_arrow_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 27 */
+  {FRBITS (mc_reversed_hollow_rectangle_right_arrow_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 28 */
+  {FRBITS (mc_hollow_rectangle_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 29 */
+  {FRBITS (mc_vertical_bar_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 30 */
+  {FRBITS (mc_reversed_vertical_bar_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 31 */
+  {FRBITS (mc_backslash_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 32 */
+  {FRBITS (mc_vertical_bar_backslash_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 33 */
+  {FRBITS (mc_pilcrow_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 34 */
+  {FRBITS (mc_smiley_face_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 35 */
+  {FRBITS (mc_single_angle_right_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 36 */
+  {FRBITS (mc_single_angle_left_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 37 */
+  {FRBITS (mc_double_angle_right_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 38 */
+  {FRBITS (mc_double_angle_left_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 39 */
+  {FRBITS (mc_triple_angle_right_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 40 */
+  {FRBITS (mc_triple_angle_left_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 41 */
+  {FRBITS (mc_single_angle_up_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 42 */
+  {FRBITS (mc_single_angle_down_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 43 */
+  {FRBITS (mc_double_angle_up_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 44 */
+  {FRBITS (mc_double_angle_down_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 45 */
+  {FRBITS (mc_triple_angle_up_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 46 */
+  {FRBITS (mc_triple_angle_down_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 47 */
+  {FRBITS (mc_quadruple_angle_up_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
+  /* 48 */
+  {FRBITS (mc_quadruple_angle_down_bits), 8, 0, ALIGN_BITMAP_CENTER, 0},
 };
+
+/* Use this to suppress gcc's `...may be used before initialized' warnings. */
+#ifdef lint
+# define MC_IF_LINT(Code) Code
+#else
+# define MC_IF_LINT(Code) /* empty */
+#endif
+
+static struct fringe_bitmap * get_fringe_bitmap_data (int);
+
+/* nth 0 => false, false
+   nth 1 => true, false
+   nth 2 => false, true
+   nth 3 => true, true
+  Lookup in buffer-local fringe-indicator-alist before global alist.
+     Elements are:
+  BITMAP    -- use for all
+  (L R)    -- use for left right (whether partial or not)
+  (L R PL PR)  -- use for left right partial-left partial-right
+  If any value in local binding is not present or t, use global value.
+     If partial, lookup partial bitmap in default value if not found here.
+     If not partial, or no partial spec is present, use non-partial bitmap. */
+int
+mc_get_fringe_bitmap (struct window *w, Lisp_Object bitmap, int right_p, int partial_p)
+{
+  Lisp_Object cmap, bm1 = Qnil, bm2 = Qnil, bm;
+  EMACS_INT ln1 = 0, ln2 = 0;
+  int ix1 = right_p;
+  int ix2 = ix1 + (partial_p ? 2 : 0);
+  if ((cmap = BVAR (XBUFFER (w->contents), fringe_indicator_alist)), !NILP (cmap))
+    {
+      bm1 = mc_assq (bitmap, cmap);
+      if (CONSP (bm1))
+  {
+    if ((bm1 = XCDR (bm1)), NILP (bm1))
+      return MC_NO_FRINGE_BITMAP;
+    if (CONSP (bm1))
+      {
+        ln1 = XFIXNUM (Flength (bm1));
+        if (partial_p)
+          {
+            if (ln1 > ix2)
+              {
+                bm = mc_nth (ix2, bm1);
+                if (!EQ (bm, Qt))
+                  goto found;
+              }
+          }
+          else
+            {
+              if (ln1 > ix1)
+                {
+                  bm = mc_nth (ix1, bm1);
+                  if (!EQ (bm, Qt))
+                    goto found;
+                }
+            }
+      }
+    else if ((bm = bm1, !EQ (bm, Qt)))
+      goto found;
+  }
+    }
+  if (!EQ (cmap, BVAR (&buffer_defaults, fringe_indicator_alist))
+      && !NILP (BVAR (&buffer_defaults, fringe_indicator_alist)))
+    {
+      bm2 = mc_assq (bitmap, BVAR (&buffer_defaults, fringe_indicator_alist));
+      if (CONSP (bm2))
+        {
+          if ((bm2 = XCDR (bm2)), !NILP (bm2))
+            {
+              if (CONSP (bm2))
+                {
+                  ln2 = XFIXNUM (Flength (bm2));
+                  if (partial_p)
+                    {
+                      if (ln2 > ix2)
+                        {
+                          bm = mc_nth (ix2, bm2);
+                          if (!EQ (bm, Qt))
+                            goto found;
+                        }
+                    }
+                }
+            }
+        }
+    }
+  if (ln1 > ix1)
+    {
+      bm = mc_nth (ix1, bm1);
+      if (!EQ (bm, Qt))
+        goto found;
+    }
+  if (ln2 > ix1)
+    {
+      bm = mc_nth (ix1, bm2);
+      if (!EQ (bm, Qt))
+        goto found;
+      return MC_NO_FRINGE_BITMAP;
+    }
+    else if ((bm = bm2, NILP (bm)))
+      return MC_NO_FRINGE_BITMAP;
+  found:
+  return lookup_fringe_bitmap (bm);
+}
+
+static int
+mc_get_logical_cursor_bitmap (struct window *w, Lisp_Object cursor)
+{
+  Lisp_Object cmap, bm = Qnil;
+  if ((cmap = BVAR (XBUFFER (w->contents), fringe_cursor_alist)), !NILP (cmap))
+    {
+      bm = mc_assq (cursor, cmap);
+      if (CONSP (bm))
+        {
+          if ((bm = XCDR (bm)), NILP (bm))
+            return MC_NO_FRINGE_BITMAP;
+          return lookup_fringe_bitmap (bm);
+        }
+    }
+  if (EQ (cmap, BVAR (&buffer_defaults, fringe_cursor_alist)))
+    return MC_NO_FRINGE_BITMAP;
+  bm = mc_assq (cursor, BVAR (&buffer_defaults, fringe_cursor_alist));
+  if (!CONSP (bm) || ((bm = XCDR (bm)), NILP (bm)))
+    return MC_NO_FRINGE_BITMAP;
+  return lookup_fringe_bitmap (bm);
+}
+
+static int
+mc_get_logical_fringe_bitmap (struct window *w, Lisp_Object bitmap, int right_p, int partial_p)
+{
+  Lisp_Object cmap, bm1 = Qnil, bm2 = Qnil, bm;
+  EMACS_INT ln1 = 0, ln2 = 0;
+  int ix1 = right_p;
+  int ix2 = ix1 + (partial_p ? 2 : 0);
+  /* Lookup in buffer-local fringe-indicator-alist before global alist.
+     Elements are:
+  BITMAP    -- use for all
+  (L R)    -- use for left right (whether partial or not)
+  (L R PL PR)  -- use for left right partial-left partial-right
+  If any value in local binding is not present or t, use global value.
+     If partial, lookup partial bitmap in default value if not found here.
+     If not partial, or no partial spec is present, use non-partial bitmap. */
+  if ((cmap = BVAR (XBUFFER (w->contents), fringe_indicator_alist)), !NILP (cmap))
+    {
+      bm1 = mc_assq (bitmap, cmap);
+      if (CONSP (bm1))
+        {
+          if ((bm1 = XCDR (bm1)), NILP (bm1))
+            return MC_NO_FRINGE_BITMAP;
+          if (CONSP (bm1))
+            {
+              ln1 = XFIXNUM (Flength (bm1));
+              if (partial_p)
+                {
+                  if (ln1 > ix2)
+                    {
+                      bm = mc_nth (ix2, bm1);
+                      if (!EQ (bm, Qt))
+                        goto found;
+                    }
+                }
+                else
+                  {
+                    if (ln1 > ix1)
+                      {
+                        bm = mc_nth (ix1, bm1);
+                        if (!EQ (bm, Qt))
+                          goto found;
+                      }
+                  }
+            }
+            else if ((bm = bm1, !EQ (bm, Qt)))
+              goto found;
+        }
+    }
+  if (!EQ (cmap, BVAR (&buffer_defaults, fringe_indicator_alist))
+      && !NILP (BVAR (&buffer_defaults, fringe_indicator_alist)))
+    {
+      bm2 = mc_assq (bitmap, BVAR (&buffer_defaults, fringe_indicator_alist));
+      if (CONSP (bm2))
+        {
+          if ((bm2 = XCDR (bm2)), !NILP (bm2))
+            {
+              if (CONSP (bm2))
+                {
+                  ln2 = XFIXNUM (Flength (bm2));
+                  if (partial_p)
+                    {
+                      if (ln2 > ix2)
+                        {
+                          bm = mc_nth (ix2, bm2);
+                          if (!EQ (bm, Qt))
+                            goto found;
+                        }
+                    }
+                }
+            }
+        }
+    }
+  if (ln1 > ix1)
+    {
+      bm = mc_nth (ix1, bm1);
+      if (!EQ (bm, Qt))
+        goto found;
+    }
+  if (ln2 > ix1)
+    {
+      bm = mc_nth (ix1, bm2);
+      if (!EQ (bm, Qt))
+        goto found;
+      return MC_NO_FRINGE_BITMAP;
+    }
+    else if ((bm = bm2, NILP (bm)))
+      return MC_NO_FRINGE_BITMAP;
+  found:
+  return lookup_fringe_bitmap (bm);
+}
+
+/* Recalculate the bitmaps to show in the fringes of window W.
+   Only mark rows with modified bitmaps for update in redraw_fringe_bitmaps_p.
+   If KEEP_CURRENT_P is 0, update current_matrix too. */
+bool
+mc_update_window_fringes (struct window *w, bool keep_current_p)
+{
+  struct glyph_row *row, *cur = 0;
+  int yb = window_text_bottom_y (w);
+  int rn, nrows = w->current_matrix->nrows;
+  int y;
+  bool redraw_p = 0;
+  Lisp_Object boundary_top = Qnil, boundary_bot = Qnil;
+  Lisp_Object arrow_top = Qnil, arrow_bot = Qnil;
+  Lisp_Object empty_pos;
+  Lisp_Object ind = Qnil;
+#define MAX_BITMAP_CACHE (8*4)
+  int bitmap_cache[MAX_BITMAP_CACHE];
+  int top_ind_rn, bot_ind_rn;
+  int top_ind_min_y, bot_ind_max_y;
+  /* top_ind_rn is set to a nonnegative value whenever
+     row->indicate_bob_p is set, so it's OK that top_row_ends_at_zv_p
+     is not initialized here.  Similarly for bot_ind_rn,
+     row->indicate_eob_p and bot_row_ends_at_zv_p. */
+  int top_row_ends_at_zv_p MC_IF_LINT (= 0), bot_row_ends_at_zv_p MC_IF_LINT (= 0);
+  if (w->pseudo_window_p)
+    return 0;
+  if (!MINI_WINDOW_P (w)
+      && (ind = BVAR (XBUFFER (w->contents), indicate_buffer_boundaries), !NILP (ind)))
+    {
+      if (EQ (ind, Qleft) || EQ (ind, Qright))
+        boundary_top = boundary_bot = arrow_top = arrow_bot = ind;
+        else if (CONSP (ind)
+                 && CONSP (XCAR (ind)))
+        {
+          Lisp_Object pos;
+          if (pos = mc_assq (Qt, ind), !NILP (pos))
+            boundary_top = boundary_bot = arrow_top = arrow_bot = XCDR (pos);
+          if (pos = mc_assq (Qtop, ind), !NILP (pos))
+            boundary_top = XCDR (pos);
+          if (pos = mc_assq (Qbottom, ind), !NILP (pos))
+            boundary_bot = XCDR (pos);
+          if (pos = mc_assq (Qup, ind), !NILP (pos))
+            arrow_top = XCDR (pos);
+          if (pos = mc_assq (Qdown, ind), !NILP (pos))
+            arrow_bot = XCDR (pos);
+        }
+        else
+          /* Anything else means boundary on left and no arrows. */
+          boundary_top = boundary_bot = Qleft;
+    }
+  top_ind_rn = bot_ind_rn = -1;
+  if (!NILP (ind))
+    {
+      for (y = w->vscroll, rn = 0;
+           y < yb && rn < nrows;
+           y += row->height, ++rn)
+        {
+          row = w->desired_matrix->rows + rn;
+          if (!row->enabled_p)
+            row = w->current_matrix->rows + rn;
+          row->indicate_bob_p = row->indicate_top_line_p = 0;
+          row->indicate_eob_p = row->indicate_bottom_line_p = 0;
+          if (!row->mode_line_p)
+            {
+              if (top_ind_rn < 0 && row->visible_height > 0)
+                {
+                  if (MATRIX_ROW_START_CHARPOS (row) <= BUF_BEGV (XBUFFER (w->contents))
+                      && !MATRIX_ROW_PARTIALLY_VISIBLE_AT_TOP_P (w, row))
+                    row->indicate_bob_p = !NILP (boundary_top);
+                    else
+                      row->indicate_top_line_p = !NILP (arrow_top);
+                  top_ind_rn = rn;
+                }
+              if (bot_ind_rn < 0)
+                {
+                  if (MATRIX_ROW_END_CHARPOS (row) >= BUF_ZV (XBUFFER (w->contents))
+                      && !MATRIX_ROW_PARTIALLY_VISIBLE_AT_BOTTOM_P (w, row))
+                    row->indicate_eob_p = !NILP (boundary_bot), bot_ind_rn = rn;
+                    else if (y + row->height >= yb)
+                      row->indicate_bottom_line_p = !NILP (arrow_bot), bot_ind_rn = rn;
+                }
+            }
+        }
+    }
+  empty_pos = BVAR (XBUFFER (w->contents), indicate_empty_lines);
+  if (!NILP (empty_pos) && !EQ (empty_pos, Qright))
+    empty_pos = WINDOW_LEFT_FRINGE_WIDTH (w) == 0 ? Qright : Qleft;
+  for (y = 0; y < MAX_BITMAP_CACHE; y++)
+    bitmap_cache[y] = -1;
+#define MC_LEFT_FRINGE(cache, which, partial_p)			\
+  (bitmap_cache[cache*4+partial_p] >= 0				\
+   ? bitmap_cache[cache*4+partial_p]				\
+   : (bitmap_cache[cache*4+partial_p] =				\
+      mc_get_logical_fringe_bitmap (w, which, 0, partial_p)))
+#define MC_RIGHT_FRINGE(cache, which, partial_p)			\
+  (bitmap_cache[cache*4+2+partial_p] >= 0			\
+   ? bitmap_cache[cache*4+2+partial_p]				\
+   : (bitmap_cache[cache*4+2+partial_p] =			\
+      mc_get_logical_fringe_bitmap (w, which, 1, partial_p)))
+  /* Extend top-aligned top indicator (or bottom-aligned bottom
+     indicator) to adjacent rows if it doesn't fit in one row. */
+  top_ind_min_y = bot_ind_max_y = -1;
+  if (top_ind_rn >= 0)
+    {
+      int bn = MC_NO_FRINGE_BITMAP;
+      row = w->desired_matrix->rows + top_ind_rn;
+      if (!row->enabled_p)
+        row = w->current_matrix->rows + top_ind_rn;
+      top_row_ends_at_zv_p = row->ends_at_zv_p;
+      if (row->indicate_bob_p)
+        {
+          if (EQ (boundary_top, Qleft))
+            bn = ((row->indicate_eob_p && EQ (boundary_bot, Qleft))
+                  ? MC_LEFT_FRINGE (1, Qtop_bottom, row->ends_at_zv_p)
+                  : MC_LEFT_FRINGE (2, Qtop, 0));
+            else
+              bn = ((row->indicate_eob_p && EQ (boundary_bot, Qright))
+                    ? MC_RIGHT_FRINGE (1, Qtop_bottom, row->ends_at_zv_p)
+                    : MC_RIGHT_FRINGE (2, Qtop, 0));
+        }
+        else if (row->indicate_top_line_p)
+          {
+            if (EQ (arrow_top, Qleft))
+              bn = MC_LEFT_FRINGE (6, Qup, 0);
+              else
+                bn = MC_RIGHT_FRINGE (6, Qup, 0);
+          }
+      if (bn != MC_NO_FRINGE_BITMAP)
+        {
+          struct fringe_bitmap *fb = get_fringe_bitmap_data (bn);
+          if (fb->align == ALIGN_BITMAP_TOP && fb->period == 0)
+            {
+              struct glyph_row *row1;
+              int top_ind_max_y;
+              top_ind_min_y = WINDOW_HEADER_LINE_HEIGHT (w);
+              top_ind_max_y = top_ind_min_y + fb->height;
+              if (top_ind_max_y > yb)
+                top_ind_max_y = yb;
+              for (y = row->y + row->height, rn = top_ind_rn + 1;
+                   y < top_ind_max_y && rn < nrows;
+                   y += row1->height, rn++)
+                {
+                  if (bot_ind_rn >= 0 && rn >= bot_ind_rn)
+                    break;
+                  row1 = w->desired_matrix->rows + rn;
+                  if (!row1->enabled_p)
+                    row1 = w->current_matrix->rows + rn;
+                  row1->indicate_bob_p = row->indicate_bob_p;
+                  row1->indicate_top_line_p = row->indicate_top_line_p;
+                }
+            }
+        }
+    }
+  if (bot_ind_rn >= 0)
+    {
+      int bn = MC_NO_FRINGE_BITMAP;
+      row = w->desired_matrix->rows + bot_ind_rn;
+      if (!row->enabled_p)
+        row = w->current_matrix->rows + bot_ind_rn;
+      bot_row_ends_at_zv_p = row->ends_at_zv_p;
+      if (row->indicate_eob_p)
+        {
+          if (EQ (boundary_bot, Qleft))
+            bn = MC_LEFT_FRINGE (3, Qbottom, row->ends_at_zv_p);
+            else
+              bn = MC_RIGHT_FRINGE (3, Qbottom, row->ends_at_zv_p);
+        }
+        else if (row->indicate_bottom_line_p)
+          {
+            if (EQ (arrow_bot, Qleft))
+              bn = MC_LEFT_FRINGE (7, Qdown, 0);
+              else
+                bn = MC_RIGHT_FRINGE (7, Qdown, 0);
+          }
+      if (bn != MC_NO_FRINGE_BITMAP)
+        {
+          struct fringe_bitmap *fb = get_fringe_bitmap_data (bn);
+          if (fb->align == ALIGN_BITMAP_BOTTOM && fb->period == 0)
+            {
+              struct glyph_row *row1;
+              int bot_ind_min_y;
+              bot_ind_max_y = row->y + row->visible_height;
+              bot_ind_min_y = bot_ind_max_y - fb->height;
+              if (bot_ind_min_y < WINDOW_HEADER_LINE_HEIGHT (w))
+                bot_ind_min_y = WINDOW_HEADER_LINE_HEIGHT (w);
+              for (y = row->y, rn = bot_ind_rn - 1;
+                   y >= bot_ind_min_y && rn >= 0;
+                   y -= row1->height, rn--)
+                {
+                  if (top_ind_rn >= 0 && rn <= top_ind_rn)
+                    break;
+                  row1 = w->desired_matrix->rows + rn;
+                  if (!row1->enabled_p)
+                    row1 = w->current_matrix->rows + rn;
+                  row1->indicate_eob_p = row->indicate_eob_p;
+                  row1->indicate_bottom_line_p = row->indicate_bottom_line_p;
+                }
+            }
+        }
+    }
+  bool auto_hscroll_mode_p = EQ (Fbuffer_local_value (Qauto_hscroll_mode, w->contents), Qcurrent_line);
+  /* EXAMPLE:  (scroll-left 5) */
+  bool hscl_all_temp_p = (w->suspend_auto_hscroll
+                          && auto_hscroll_mode_p
+                          && w->hscroll > 0
+                          && w->min_hscroll == 0);
+  /* EXAMPLE:  C-u C-x < and do nothing. */
+  bool hscl_all_perm_0_p = (w->suspend_auto_hscroll
+                            && auto_hscroll_mode_p
+                            && w->hscroll > 0
+                            && w->min_hscroll > 0
+                            && w->min_hscroll == w->hscroll);
+  /* EXAMPLE:  C-u C-x < and do something else besides horizontally scrolling the
+               current line differently.
+               Current line is _not_ horizontally scrolled differently. */
+  bool hscl_all_perm_1_p = (!w->suspend_auto_hscroll
+                            && auto_hscroll_mode_p
+                            && w->hscroll > 0
+                            && w->min_hscroll > 0
+                            && w->min_hscroll == w->hscroll);
+  /* EXAMPLE:  C-u C-x < and ...
+               Current line is _not_ horizontally scrolled differently. */
+  bool hscl_all_perm_2_p = (!w->suspend_auto_hscroll
+                            && auto_hscroll_mode_p
+                            && w->hscroll == 0
+                            && w->min_hscroll > 0
+                            && w->min_hscroll != w->hscroll);
+  /* EXAMPLE:  (scroll-left 5); and, then press the left arrow key one time.
+               Current line _is_ horizontally scrolled differently.*/
+  bool hscl_temp_p = (!w->suspend_auto_hscroll
+                      && auto_hscroll_mode_p
+                      && w->hscroll > 0
+                      && w->min_hscroll == 0);
+  /* EXAMPLE:  C-u C-x < and do something that causes the current line to be
+               horizontally scrolled differently.
+               Current line _is_ horizontally scrolled differently. */
+  bool hscl_perm_p = (!w->suspend_auto_hscroll
+                      && auto_hscroll_mode_p
+                      && w->hscroll > 0
+                      && w->min_hscroll > 0
+                      && w->min_hscroll != w->hscroll);
+  struct frame *f = XFRAME (w->frame);
+  for (y = w->vscroll, rn = 0;
+       y < yb && rn < nrows;
+       y += row->height, rn++)
+    {
+  int left, right;
+  unsigned left_face_id, right_face_id;
+  int left_offset, right_offset;
+  bool periodic_p;
+  row = w->desired_matrix->rows + rn;
+  cur = w->current_matrix->rows + rn;
+  int vnth_dm = MATRIX_ROW_VPOS (w->desired_matrix->rows + rn, w->desired_matrix);
+  int vnth_cm = MATRIX_ROW_VPOS (w->current_matrix->rows + rn, w->current_matrix);
+  enum mc_row_position row_position = mc_row_position (w, cur, cur, vnth_cm);
+  int mc_left_fringe_bitmap = MC_NO_FRINGE_BITMAP;
+  int mc_left_fringe_face_id = DEFAULT_FACE_ID;
+  int mc_right_fringe_bitmap = MC_NO_FRINGE_BITMAP;
+  int mc_right_fringe_face_id = DEFAULT_FACE_ID;
+  enum mc_cache_type cache_type = CH_CACHE;
+  for (int nth = 0;
+       mc_traverse_cache_p (w->mc_matrix, cache_type, vnth_cm, nth);
+       ++nth)
+    {
+      //  int x = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].x;
+      //  int fx = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].fx;
+      //  int y = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].y;
+      //  int fy = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].fy;
+      //  int hpos = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].hpos;
+      int vpos = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].vpos;
+      //  int wd = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].wd;
+      //  int h = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].h;
+      enum mc_cursor_type cursor_type = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].cursor_type;
+      //  int cursor_width = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].cursor_width;
+      //  struct mc_RGB lsl_fg = {.red = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].fg.red,
+      //                          .green = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].fg.green,
+      //                          .blue = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].fg.blue};
+      //  struct mc_RGB lsl_bg = {.red = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].bg.red,
+      //                          .green = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].bg.green,
+      //                          .blue = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].bg.blue};
+      bool active_p = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].active_p;
+      enum mc_flavor glyph_flavor = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].glyph_flavor;
+      bool enabled_p = w->mc_matrix.vpos[vnth_cm].cache[cache_type][nth].enabled_p;
+      if ((vpos == vnth_dm || vpos == vnth_cm)
+          && glyph_flavor == MC_OVERLAY_ARROW_BITMAP
+          && !hscl_all_temp_p
+          && !hscl_temp_p
+          && !hscl_perm_p
+          && !hscl_all_perm_0_p
+          && !hscl_all_perm_1_p
+          && !hscl_all_perm_2_p
+          && enabled_p)
+        {
+          int fringe_bitmap = MC_NO_FRINGE_BITMAP;
+          enum face_id overlay_arrow_face_id =
+            (!active_p
+             && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+            ? lookup_derived_face (w, f, intern ("+-overlay-arrow-inactive-pre-zv-face"), FRINGE_FACE_ID, true)
+            : (active_p)
+              ? lookup_derived_face (w, f, intern ("+-overlay-arrow-pre-zv-face"), FRINGE_FACE_ID, true)
+            : DEFAULT_FACE_ID;
+          mc_left_fringe_face_id = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                                    ? overlay_arrow_face_id
+                                    : DEFAULT_FACE_ID;
+          if (w->hscroll != 0)
+            fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-overlay-arrow"), false, true);
+            else
+              fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-overlay-arrow"), true, true);
+          mc_left_fringe_bitmap = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                                   ? fringe_bitmap
+                                   : MC_NO_FRINGE_BITMAP;
+        }
+        else if ((vpos == vnth_dm || vpos == vnth_cm)
+                 && glyph_flavor == MC_OVERLAY_ARROW_BITMAP
+                 && (hscl_all_temp_p
+                     || hscl_all_perm_0_p
+                     || hscl_all_perm_1_p
+                     || hscl_all_perm_2_p
+                     || hscl_temp_p
+                     || hscl_perm_p)
+                 && enabled_p)
+          {
+            int fringe_bitmap = MC_NO_FRINGE_BITMAP;
+            enum face_id overlay_arrow_face_id =
+              (!active_p
+               && !NILP (BVAR (XBUFFER (w->contents), ch_inactive_windows)))
+              ? lookup_derived_face (w, f, intern ("+-overlay-arrow-hscl-inactive-pre-zv-face"), FRINGE_FACE_ID, true)
+              : (active_p)
+                ? lookup_derived_face (w, f, intern ("+-overlay-arrow-hscl-pre-zv-face"), FRINGE_FACE_ID, true)
+              : DEFAULT_FACE_ID;
+            mc_left_fringe_face_id = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                                      ? overlay_arrow_face_id
+                                      : DEFAULT_FACE_ID;
+            if (hscl_all_perm_0_p)
+              fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), false, false);
+              else if (hscl_all_perm_1_p)
+                fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), true, false);
+                else if (hscl_all_perm_2_p)
+                  fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), false, true);
+                  else if (hscl_perm_p)
+                    fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-perm"), true, true);
+                    else if (hscl_all_temp_p)
+                      fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-temp"), false, false);
+                      else if (hscl_temp_p)
+                        fringe_bitmap = mc_get_fringe_bitmap (w, intern ("+-hscl-temp"), true, false);
+            mc_left_fringe_bitmap = (cursor_type == MC_LEFT_FRINGE_BITMAP)
+                                     ? fringe_bitmap
+                                     : MC_NO_FRINGE_BITMAP;
+          }
+          else if ((vpos == vnth_dm || vpos == vnth_cm)
+                    && (glyph_flavor == MC_HOLLOW_RECTANGLE_RIGHT_ARROW
+                        || glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                        || glyph_flavor == MC_HOLLOW_RECTANGLE
+                        || glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW
+                        || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                        || glyph_flavor == MC_VERTICAL_BAR
+                        || glyph_flavor == MC_REVERSED_VERTICAL_BAR
+                        || glyph_flavor == MC_VERTICAL_BAR_BACKSLASH)
+                    && enabled_p)
+            {
+              Lisp_Object bitmap_flavor = (glyph_flavor == MC_HOLLOW_RECTANGLE_RIGHT_ARROW)
+                                          ? Qmc_hollow_rectangle_right_arrow
+                                          : (glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW)
+                                            ? Qmc_reversed_hollow_rectangle_right_arrow
+                                          : (glyph_flavor == MC_HOLLOW_RECTANGLE)
+                                            ? Qmc_hollow_rectangle
+                                          : (glyph_flavor == MC_VERTICAL_BAR_RIGHT_ARROW)
+                                            ? Qmc_vertical_bar_right_arrow
+                                          : (glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW)
+                                            ? Qmc_reversed_vertical_bar_right_arrow
+                                          : (glyph_flavor == MC_VERTICAL_BAR)
+                                            ? Qmc_vertical_bar
+                                          : (glyph_flavor == MC_REVERSED_VERTICAL_BAR)
+                                            ? Qmc_reversed_vertical_bar
+                                          : (glyph_flavor == MC_VERTICAL_BAR_BACKSLASH)
+                                            ? Qmc_vertical_bar_backslash
+                                          : Qnil;
+              mc_right_fringe_bitmap = (cursor_type == MC_RIGHT_FRINGE_BITMAP)
+                                        ? lookup_fringe_bitmap (bitmap_flavor)
+                                        : MC_NO_FRINGE_BITMAP;
+              mc_right_fringe_face_id =
+                (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                 && row_position == PRE_ZV
+                 && (glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                     || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                     || glyph_flavor == MC_REVERSED_VERTICAL_BAR))
+                  ? lookup_derived_face (w, f, intern ("+-reversed-bar-pre-zv-face"), FRINGE_FACE_ID, true)
+                : (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                   && row_position == AT_ZV
+                   && (glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                       || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                       || glyph_flavor == MC_REVERSED_VERTICAL_BAR))
+                  ? lookup_derived_face (w, f, intern ("+-reversed-bar-at-zv-face"), FRINGE_FACE_ID, true)
+                : (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                   && row_position == POST_ZV
+                   && (glyph_flavor == MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                       || glyph_flavor == MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                       || glyph_flavor == MC_REVERSED_VERTICAL_BAR))
+                  ? lookup_derived_face (w, f, intern ("+-reversed-bar-post-zv-face"), FRINGE_FACE_ID, true)
+                : (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                   && row_position == PRE_ZV
+                   && glyph_flavor != MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                   && glyph_flavor != MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                   && glyph_flavor != MC_REVERSED_VERTICAL_BAR)
+                  ? lookup_derived_face (w, f, intern ("+-bar-pre-zv-face"), FRINGE_FACE_ID, true)
+                : (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                   && row_position == AT_ZV
+                   && glyph_flavor != MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                   && glyph_flavor != MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                   && glyph_flavor != MC_REVERSED_VERTICAL_BAR)
+                  ? lookup_derived_face (w, f, intern ("+-bar-at-zv-face"), FRINGE_FACE_ID, true)
+                : (cursor_type == MC_RIGHT_FRINGE_BITMAP
+                   && row_position == POST_ZV
+                   && glyph_flavor != MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW
+                   && glyph_flavor != MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW
+                   && glyph_flavor != MC_REVERSED_VERTICAL_BAR)
+                  ? lookup_derived_face (w, f, intern ("+-bar-post-zv-face"), FRINGE_FACE_ID, true)
+                : DEFAULT_FACE_ID;
+            }
+        }
+      if (!row->enabled_p)
+        row = cur;
+      left_face_id = right_face_id = DEFAULT_FACE_ID;
+      left_offset = right_offset = 0;
+      periodic_p = 0;
+      /* Decide which bitmap to draw in the left fringe. */
+      if (WINDOW_LEFT_FRINGE_WIDTH (w) == 0)
+        left = MC_NO_FRINGE_BITMAP;
+      else if (row->left_user_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        {
+          left = row->left_user_fringe_bitmap;
+          left_face_id = row->left_user_fringe_face_id;
+        }
+      else if ((!row->reversed_p && row->truncated_on_left_p)
+               || (row->reversed_p && row->truncated_on_right_p))
+        left = MC_LEFT_FRINGE (0, Qtruncation, 0);
+      else if (row->indicate_bob_p && EQ (boundary_top, Qleft))
+        {
+          left = ((row->indicate_eob_p && EQ (boundary_bot, Qleft))
+                 ? MC_LEFT_FRINGE (1, Qtop_bottom, top_row_ends_at_zv_p)
+                 : MC_LEFT_FRINGE (2, Qtop, 0));
+          if (top_ind_min_y >= 0)
+            left_offset = top_ind_min_y - row->y;
+        }
+      else if (row->indicate_eob_p && EQ (boundary_bot, Qleft))
+        {
+          left = MC_LEFT_FRINGE (3, Qbottom, bot_row_ends_at_zv_p);
+          if (bot_ind_max_y >= 0)
+            left_offset = bot_ind_max_y - (row->y + row->visible_height);
+        }
+      else if ((!row->reversed_p && MATRIX_ROW_CONTINUATION_LINE_P (row))
+               || (row->reversed_p && row->continued_p))
+        left = MC_LEFT_FRINGE (4, Qcontinuation, 0);
+      else if (row->indicate_empty_line_p && EQ (empty_pos, Qleft))
+        left = MC_LEFT_FRINGE (5, Qempty_line, 0);
+      else if (row->indicate_top_line_p && EQ (arrow_top, Qleft))
+        {
+          left = MC_LEFT_FRINGE (6, Qup, 0);
+          if (top_ind_min_y >= 0)
+            left_offset = top_ind_min_y - row->y;
+        }
+      else if (row->indicate_bottom_line_p && EQ (arrow_bot, Qleft))
+        {
+          left = MC_LEFT_FRINGE (7, Qdown, 0);
+          if (bot_ind_max_y >= 0)
+            left_offset = bot_ind_max_y - (row->y + row->visible_height);
+        }
+      else
+        left = MC_NO_FRINGE_BITMAP;
+      /* Decide which bitmap to draw in the right fringe. */
+      if (WINDOW_RIGHT_FRINGE_WIDTH (w) == 0)
+        right = MC_NO_FRINGE_BITMAP;
+      else if (row->right_user_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        {
+          right = row->right_user_fringe_bitmap;
+          right_face_id = row->right_user_fringe_face_id;
+        }
+      else if ((!row->reversed_p && row->truncated_on_right_p)
+               || (row->reversed_p && row->truncated_on_left_p))
+        right = MC_RIGHT_FRINGE (0, Qtruncation, 0);
+      else if (row->indicate_bob_p && EQ (boundary_top, Qright))
+        {
+          right = ((row->indicate_eob_p && EQ (boundary_bot, Qright))
+             ? MC_RIGHT_FRINGE (1, Qtop_bottom, top_row_ends_at_zv_p)
+             : MC_RIGHT_FRINGE (2, Qtop, 0));
+          if (top_ind_min_y >= 0)
+            right_offset = top_ind_min_y - row->y;
+        }
+      else if (row->indicate_eob_p && EQ (boundary_bot, Qright))
+        {
+          right = MC_RIGHT_FRINGE (3, Qbottom, bot_row_ends_at_zv_p);
+          if (bot_ind_max_y >= 0)
+            right_offset = bot_ind_max_y - (row->y + row->visible_height);
+        }
+      else if ((!row->reversed_p && row->continued_p)
+               || (row->reversed_p && MATRIX_ROW_CONTINUATION_LINE_P (row)))
+        right = MC_RIGHT_FRINGE (4, Qcontinuation, 0);
+      else if (row->indicate_top_line_p && EQ (arrow_top, Qright))
+        {
+          right = MC_RIGHT_FRINGE (6, Qup, 0);
+          if (top_ind_min_y >= 0)
+            right_offset = top_ind_min_y - row->y;
+        }
+      else if (row->indicate_bottom_line_p && EQ (arrow_bot, Qright))
+        {
+          right = MC_RIGHT_FRINGE (7, Qdown, 0);
+          if (bot_ind_max_y >= 0)
+            right_offset = bot_ind_max_y - (row->y + row->visible_height);
+        }
+      else if (row->indicate_empty_line_p && EQ (empty_pos, Qright))
+        right = MC_RIGHT_FRINGE (5, Qempty_line, 0);
+      else
+        right = MC_NO_FRINGE_BITMAP;
+      periodic_p = (get_fringe_bitmap_data (left)->period != 0
+                    || get_fringe_bitmap_data (right)->period != 0);
+      if (row->y != cur->y
+          || row->visible_height != cur->visible_height
+          || row->ends_at_zv_p != cur->ends_at_zv_p
+          || left != cur->left_fringe_bitmap
+          || right != cur->right_fringe_bitmap
+          || left_face_id != cur->left_fringe_face_id
+          || right_face_id != cur->right_fringe_face_id
+          || left_offset != cur->left_fringe_offset
+          || right_offset != cur->right_fringe_offset
+          || periodic_p != cur->fringe_bitmap_periodic_p
+          || cur->redraw_fringe_bitmaps_p)
+        {
+          redraw_p = 1, row->redraw_fringe_bitmaps_p = 1;
+          if (!keep_current_p)
+            {
+              cur->redraw_fringe_bitmaps_p = 1;
+              if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP
+                  || mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+                cur->fringe_bitmap_periodic_p = false;
+                else
+                  cur->fringe_bitmap_periodic_p = periodic_p;
+              if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+                cur->left_fringe_bitmap = mc_left_fringe_bitmap;
+                else
+                  cur->left_fringe_bitmap = left;
+              if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+                cur->left_fringe_face_id = mc_left_fringe_face_id;
+                else
+                  cur->left_fringe_face_id = left_face_id;
+              if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+                cur->left_fringe_offset = 0;
+                else
+                  cur->left_fringe_offset = left_offset;
+              if (mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+                cur->right_fringe_bitmap = mc_right_fringe_bitmap;
+                else
+                  cur->right_fringe_bitmap = right;
+              if (mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+                cur->right_fringe_face_id = mc_right_fringe_face_id;
+                else
+                  cur->right_fringe_face_id = right_face_id;
+              if (mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+                cur->right_fringe_offset = 0;
+                else
+                  cur->right_fringe_offset = right_offset;
+            }
+        }
+      if (row->overlay_arrow_bitmap < 0)
+        row->overlay_arrow_bitmap = mc_get_logical_fringe_bitmap (w, Qoverlay_arrow, 0, 0);
+      if (row->overlay_arrow_bitmap != cur->overlay_arrow_bitmap)
+        {
+          redraw_p = 1, row->redraw_fringe_bitmaps_p = 1;
+          if (!keep_current_p)
+            {
+              cur->redraw_fringe_bitmaps_p = 1;
+              cur->overlay_arrow_bitmap = row->overlay_arrow_bitmap;
+            }
+        }
+      if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP
+          || mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        row->fringe_bitmap_periodic_p = false;
+        else
+          row->fringe_bitmap_periodic_p = periodic_p;
+      if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        row->left_fringe_bitmap = mc_left_fringe_bitmap;
+        else
+          row->left_fringe_bitmap = left;
+      if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        row->left_fringe_face_id = mc_left_fringe_face_id;
+        else
+          row->left_fringe_face_id = left_face_id;
+      if (mc_left_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        row->left_fringe_offset = 0;
+        else
+          row->left_fringe_offset = left_offset;
+      if (mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        row->right_fringe_bitmap = mc_right_fringe_bitmap;
+        else
+          row->right_fringe_bitmap = right;
+      if (mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        row->right_fringe_face_id = mc_right_fringe_face_id;
+        else
+          row->right_fringe_face_id = right_face_id;
+      if (mc_right_fringe_bitmap != MC_NO_FRINGE_BITMAP)
+        row->right_fringe_offset = 0;
+        else
+          row->right_fringe_offset = right_offset;
+    }
+  return redraw_p && !keep_current_p;
+}
+
+static Lisp_Object *fringe_faces;
+
+/* Draw the bitmap WHICH in one of the left or right fringes of
+   window W.  ROW is the glyph row for which to display the bitmap; it
+   determines the vertical position at which the bitmap has to be
+   drawn.
+   LEFT_P is 1 for left fringe, 0 for right fringe.
+*/
+static void
+mc_draw_fringe_bitmap_1 (struct window *w, struct glyph_row *row, int left_p, int overlay, int which)
+{
+  struct frame *f = XFRAME (WINDOW_FRAME (w));
+  struct draw_fringe_bitmap_params p;
+  struct fringe_bitmap *fb;
+  int period;
+  int face_id = DEFAULT_FACE_ID;
+  int offset, header_line_height;
+  p.overlay_p = (overlay & 1) == 1;
+  p.cursor_p = (overlay & 2) == 2;
+  if (which != MC_NO_FRINGE_BITMAP)
+    {
+      offset = 0;
+    }
+    else if (left_p)
+      {
+        which = row->left_fringe_bitmap;
+        face_id = row->left_fringe_face_id;
+        offset = row->left_fringe_offset;
+      }
+      else
+        {
+          which = row->right_fringe_bitmap;
+          face_id = row->right_fringe_face_id;
+          offset = row->right_fringe_offset;
+        }
+  if (face_id == DEFAULT_FACE_ID)
+    {
+      Lisp_Object face = fringe_faces[which];
+      face_id = NILP (face) ? lookup_named_face (w, f, Qfringe, false)
+                            : lookup_derived_face (w, f, face, FRINGE_FACE_ID, 0);
+      if (face_id < 0)
+        face_id = FRINGE_FACE_ID;
+    }
+  fb = get_fringe_bitmap_data (which);
+  period = fb->period;
+  /* Convert row to frame coordinates. */
+  p.y = WINDOW_TO_FRAME_PIXEL_Y (w, row->y) + offset;
+  p.which = which;
+  p.bits = fb->bits;
+  p.wd = fb->width;
+  p.h = fb->height;
+  p.dh = (period > 0 ? (p.y % period) : 0);
+  p.h -= p.dh;
+  /* Adjust y to the offset in the row to start drawing the bitmap. */
+  switch (fb->align)
+    {
+    case ALIGN_BITMAP_CENTER:
+      p.y += (row->height - p.h) / 2;
+      break;
+    case ALIGN_BITMAP_BOTTOM:
+      p.y += (row->visible_height - p.h);
+      break;
+    case ALIGN_BITMAP_TOP:
+      break;
+    }
+  p.face = FACE_FROM_ID (f, face_id);
+  if (p.face == NULL)
+    {
+      /* This could happen after clearing face cache.
+      But it shouldn't happen anymore.  ++kfs */
+      return;
+    }
+  prepare_face_for_display (f, p.face);
+  /* Clear left fringe if no bitmap to draw or if bitmap doesn't fill
+     the fringe. */
+  p.bx = -1;
+  header_line_height = WINDOW_HEADER_LINE_HEIGHT (w);
+  p.by = WINDOW_TO_FRAME_PIXEL_Y (w, max (header_line_height, row->y));
+  p.ny = row->visible_height;
+  if (left_p)
+    {
+      int wd = WINDOW_LEFT_FRINGE_WIDTH (w);
+      int x = window_box_left (w, (WINDOW_HAS_FRINGES_OUTSIDE_MARGINS (w)
+           ? LEFT_MARGIN_AREA
+           : TEXT_AREA));
+      if (p.wd > wd)
+        p.wd = wd;
+      p.x = x - p.wd - (wd - p.wd) / 2;
+      if (p.wd < wd || p.y > p.by || p.y + p.h < p.by + p.ny)
+        {
+          /* If W has a vertical border to its left, don't draw over it. */
+          wd -= ((!WINDOW_LEFTMOST_P (w)
+            /* This could be wrong when we allow window local
+               right dividers - but the window on the left is hard
+               to get. */
+            && !FRAME_RIGHT_DIVIDER_WIDTH (f)
+            && !WINDOW_HAS_VERTICAL_SCROLL_BAR (w)
+            /* But don't reduce the fringe width if the window
+               has a left margin, because that means we are not
+               in danger of drawing over the vertical border,
+               and OTOH leaving out that one pixel leaves behind
+               traces of the cursor, if it was in column zero
+               before drawing non-empty margin area. */
+            && w->left_margin_cols == 0)
+           ? 1 : 0);
+          p.bx = x - wd;
+          p.nx = wd;
+        }
+    }
+  else
+    {
+      int x = window_box_right (w,
+        (WINDOW_HAS_FRINGES_OUTSIDE_MARGINS (w)
+         ? RIGHT_MARGIN_AREA
+         : TEXT_AREA));
+      int wd = WINDOW_RIGHT_FRINGE_WIDTH (w);
+      if (p.wd > wd)
+        p.wd = wd;
+      p.x = x + (wd - p.wd) / 2;
+      /* Clear right fringe if no bitmap to draw of if bitmap doesn't fill
+   the fringe. */
+      if (p.wd < wd || p.y > p.by || p.y + p.h < p.by + p.ny)
+        {
+          p.bx = x;
+          p.nx = wd;
+        }
+    }
+  if (p.x >= WINDOW_BOX_LEFT_EDGE_X (w)
+      && (p.x + p.wd) <= WINDOW_BOX_LEFT_EDGE_X (w) + WINDOW_PIXEL_WIDTH (w))
+    FRAME_RIF (f)->draw_fringe_bitmap (w, row, &p);
+}
+
+void
+mc_draw_fringe_bitmap (struct window *w, struct glyph_row *row, int left_p, enum mc_cursor_type cursor_type)
+{
+  int overlay = 0;
+  if (left_p == row->reversed_p && row->cursor_in_fringe_p)
+    {
+      Lisp_Object cursor = Qnil;
+      switch (cursor_type)
+        {
+        case MC_FRAMED_BOX:
+          if (row->visible_height >= STANDARD_BITMAP_HEIGHT (hollow_rectangle_bits))
+            cursor = Qhollow;
+          else
+            cursor = Qhollow_small;
+          break;
+        case MC_HOLLOW_BOX:
+          if (row->visible_height >= STANDARD_BITMAP_HEIGHT (hollow_rectangle_bits))
+            cursor = Qhollow;
+          else
+            cursor = Qhollow_small;
+          break;
+        case MC_FILLED_BOX:
+          cursor = Qbox;
+          break;
+        case MC_BAR:
+          cursor = Qbar;
+          break;
+        case MC_HBAR:
+          cursor = Qhbar;
+          break;
+        case MC_NO_FRINGE_BITMAP:
+        case MC_NO_CURSOR:
+        case MC_RIGHT_FRINGE_BITMAP:
+        case MC_LEFT_FRINGE_BITMAP:
+        default:
+          w->phys_cursor_on_p = 0;
+          row->cursor_in_fringe_p = 0;
+          break;
+        }
+      if (!NILP (cursor))
+        {
+          int bm = mc_get_logical_cursor_bitmap (w, cursor);
+          if (bm != MC_NO_FRINGE_BITMAP)
+            {
+              mc_draw_fringe_bitmap_1 (w, row, left_p, 2, bm);
+              overlay = EQ (cursor, Qbox) ? 3 : 1;
+            }
+        }
+    }
+  mc_draw_fringe_bitmap_1 (w, row, left_p, overlay, MC_NO_FRINGE_BITMAP);
+  if (left_p && row->overlay_arrow_bitmap != MC_NO_FRINGE_BITMAP)
+    mc_draw_fringe_bitmap_1 (w, row, 1, 1, row->overlay_arrow_bitmap);
+}
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
 
 #define NO_FRINGE_BITMAP 0
 #define UNDEF_FRINGE_BITMAP 1
@@ -1699,6 +3217,168 @@ Return nil if POS is not visible in WINDOW.  */)
 void
 syms_of_fringe (void)
 {
+
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+  /* (get 'empty-line 'fringe) => 23 => the last standard-bitmap before this one.
+  See `fringe.el`. */
+
+  /* 24 */
+  DEFSYM (Qmc_vertical_bar_right_arrow, "+-vertical-bar-right-arrow");
+  Vfringe_bitmaps = Fcons (Qmc_vertical_bar_right_arrow, Vfringe_bitmaps);
+  Fput (Qmc_vertical_bar_right_arrow, Qfringe, make_fixnum (24));
+  /* (get '+-vertical-bar-right-arrow 'fringe) => 24 */
+
+  /* 25 */
+  DEFSYM (Qmc_reversed_vertical_bar_right_arrow, "+-reversed-vertical-bar-right-arrow");
+  Vfringe_bitmaps = Fcons (Qmc_reversed_vertical_bar_right_arrow, Vfringe_bitmaps);
+  Fput (Qmc_reversed_vertical_bar_right_arrow, Qfringe, make_fixnum (25));
+  /* (get '+-reversed-vertical-bar-right-arrow 'fringe) => 25 */
+
+  /* 26 */
+  DEFSYM (Qmc_hollow_rectangle_right_arrow, "+-hollow-rectangle-right-arrow");
+  Vfringe_bitmaps = Fcons (Qmc_hollow_rectangle_right_arrow, Vfringe_bitmaps);
+  Fput (Qmc_hollow_rectangle_right_arrow, Qfringe, make_fixnum (26));
+  /* (get '+-hollow-rectangle-right-arrow 'fringe) => 26 */
+
+  /* 27 */
+  DEFSYM (Qmc_reversed_hollow_rectangle_right_arrow, "+-reversed-hollow-rectangle-right-arrow");
+  Vfringe_bitmaps = Fcons (Qmc_reversed_hollow_rectangle_right_arrow, Vfringe_bitmaps);
+  Fput (Qmc_reversed_hollow_rectangle_right_arrow, Qfringe, make_fixnum (27));
+  /* (get '+-reversed-hollow-rectangle-right-arrow 'fringe) => 27 */
+
+  /* 28 */
+  DEFSYM (Qmc_hollow_rectangle, "+-hollow-rectangle");
+  Vfringe_bitmaps = Fcons (Qmc_hollow_rectangle, Vfringe_bitmaps);
+  Fput (Qmc_hollow_rectangle, Qfringe, make_fixnum (28));
+  /* (get '+-hollow-rectangle 'fringe) => 28 */
+
+  /* 29 */
+  DEFSYM (Qmc_vertical_bar, "+-vertical-bar");
+  Vfringe_bitmaps = Fcons (Qmc_vertical_bar, Vfringe_bitmaps);
+  Fput (Qmc_vertical_bar, Qfringe, make_fixnum (29));
+  /* (get '+-vertical-bar 'fringe) => 29 */
+
+  /* 30 */
+  DEFSYM (Qmc_reversed_vertical_bar, "+-reversed-vertical-bar");
+  Vfringe_bitmaps = Fcons (Qmc_reversed_vertical_bar, Vfringe_bitmaps);
+  Fput (Qmc_reversed_vertical_bar, Qfringe, make_fixnum (30));
+  /* (get '+-reversed-vertical-bar 'fringe) => 30 */
+
+  /* 31 */
+  DEFSYM (Qmc_backslash, "+-backslash");
+  Vfringe_bitmaps = Fcons (Qmc_backslash, Vfringe_bitmaps);
+  Fput (Qmc_backslash, Qfringe, make_fixnum (31));
+  /* (get '+-backslash 'fringe) => 31 */
+
+  /* 32 */
+  DEFSYM (Qmc_vertical_bar_backslash, "+-vertical-bar-backslash");
+  Vfringe_bitmaps = Fcons (Qmc_vertical_bar_backslash, Vfringe_bitmaps);
+  Fput (Qmc_vertical_bar_backslash, Qfringe, make_fixnum (32));
+  /* (get '+-vertical-bar-backslash 'fringe) => 32 */
+
+  /* 33 */
+  DEFSYM (Qmc_pilcrow, "+-pilcrow");
+  Vfringe_bitmaps = Fcons (Qmc_pilcrow, Vfringe_bitmaps);
+  Fput (Qmc_pilcrow, Qfringe, make_fixnum (33));
+  /* (get '+-pilcrow 'fringe) => 33 */
+
+  /* 34 */
+  DEFSYM (Qmc_smiley_face, "+-smiley-face");
+  Vfringe_bitmaps = Fcons (Qmc_smiley_face, Vfringe_bitmaps);
+  Fput (Qmc_smiley_face, Qfringe, make_fixnum (34));
+  /* (get '+-smiley-face 'fringe) => 34 */
+
+  /* 35 */
+  DEFSYM (Qmc_single_angle_right, "+-single-angle-right");
+  Vfringe_bitmaps = Fcons (Qmc_single_angle_right, Vfringe_bitmaps);
+  Fput (Qmc_single_angle_right, Qfringe, make_fixnum (35));
+  /* (get '+-right-single-angle 'fringe) => 35 */
+
+  /* 36 */
+  DEFSYM (Qmc_single_angle_left, "+-single-angle-left");
+  Vfringe_bitmaps = Fcons (Qmc_single_angle_left, Vfringe_bitmaps);
+  Fput (Qmc_single_angle_left, Qfringe, make_fixnum (36));
+  /* (get '+-left-double-angle 'fringe) => 36 */
+
+  /* 37 */
+  DEFSYM (Qmc_double_angle_right, "+-double-angle-right");
+  Vfringe_bitmaps = Fcons (Qmc_double_angle_right, Vfringe_bitmaps);
+  Fput (Qmc_double_angle_right, Qfringe, make_fixnum (37));
+  /* (get '+-right-double-angle 'fringe) => 37 */
+
+  /* 38 */
+  DEFSYM (Qmc_double_angle_left, "+-double-angle-left");
+  Vfringe_bitmaps = Fcons (Qmc_double_angle_left, Vfringe_bitmaps);
+  Fput (Qmc_double_angle_left, Qfringe, make_fixnum (38));
+  /* (get '+-left-double-angle 'fringe) => 38 */
+
+  /* 39 */
+  DEFSYM (Qmc_triple_angle_right, "+-triple-angle-right");
+  Vfringe_bitmaps = Fcons (Qmc_triple_angle_right, Vfringe_bitmaps);
+  Fput (Qmc_triple_angle_right, Qfringe, make_fixnum (39));
+  /* (get '+-triple-angle-right 'fringe) => 39 */
+
+  /* 40 */
+  DEFSYM (Qmc_triple_angle_left, "+-triple-angle-left");
+  Vfringe_bitmaps = Fcons (Qmc_triple_angle_left, Vfringe_bitmaps);
+  Fput (Qmc_triple_angle_left, Qfringe, make_fixnum (40));
+  /* (get '+-triple-angle-left 'fringe) => 40 */
+
+  /* 41 */
+  DEFSYM (Qmc_single_angle_up, "+-single-angle-up");
+  Vfringe_bitmaps = Fcons (Qmc_single_angle_up, Vfringe_bitmaps);
+  Fput (Qmc_single_angle_up, Qfringe, make_fixnum (41));
+  /* (get '+-single-angle-up 'fringe) => 41 */
+
+  /* 42 */
+  DEFSYM (Qmc_single_angle_down, "+-single-angle-down");
+  Vfringe_bitmaps = Fcons (Qmc_single_angle_down, Vfringe_bitmaps);
+  Fput (Qmc_single_angle_down, Qfringe, make_fixnum (42));
+  /* (get '+-single-angle-down 'fringe) => 42 */
+
+  /* 43 */
+  DEFSYM (Qmc_double_angle_up, "+-double-angle-up");
+  Vfringe_bitmaps = Fcons (Qmc_double_angle_up, Vfringe_bitmaps);
+  Fput (Qmc_double_angle_up, Qfringe, make_fixnum (43));
+  /* (get '+-double-angle-up 'fringe) => 43 */
+
+  /* 44 */
+  DEFSYM (Qmc_double_angle_down, "+-double-angle-down");
+  Vfringe_bitmaps = Fcons (Qmc_double_angle_down, Vfringe_bitmaps);
+  Fput (Qmc_double_angle_down, Qfringe, make_fixnum (44));
+  /* (get '+-double-angle-down 'fringe) => 44 */
+
+  /* 45 */
+  DEFSYM (Qmc_triple_angle_up, "+-triple-angle-up");
+  Vfringe_bitmaps = Fcons (Qmc_triple_angle_up, Vfringe_bitmaps);
+  Fput (Qmc_triple_angle_up, Qfringe, make_fixnum (45));
+  /* (get '+-triple-angle-up 'fringe) => 45 */
+
+  /* 46 */
+  DEFSYM (Qmc_triple_angle_down, "+-triple-angle-down");
+  Vfringe_bitmaps = Fcons (Qmc_triple_angle_down, Vfringe_bitmaps);
+  Fput (Qmc_triple_angle_down, Qfringe, make_fixnum (46));
+  /* (get '+-triple-angle-down 'fringe) => 46 */
+
+  /* 47 */
+  DEFSYM (Qmc_quadruple_angle_up, "+-quadruple-angle-up");
+  Vfringe_bitmaps = Fcons (Qmc_quadruple_angle_up, Vfringe_bitmaps);
+  Fput (Qmc_quadruple_angle_up, Qfringe, make_fixnum (47));
+  /* (get '+-quadruple-angle-up 'fringe) => 47 */
+
+  /* 48 */
+  DEFSYM (Qmc_quadruple_angle_down, "+-quadruple-angle-down");
+  Vfringe_bitmaps = Fcons (Qmc_quadruple_angle_down, Vfringe_bitmaps);
+  Fput (Qmc_quadruple_angle_down, Qfringe, make_fixnum (48));
+  /* (get '+-quadruple-angle-down 'fringe) => 48 */
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
   DEFSYM (Qtruncation, "truncation");
   DEFSYM (Qcontinuation, "continuation");
   DEFSYM (Qoverlay_arrow, "overlay-arrow");

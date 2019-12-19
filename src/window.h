@@ -324,6 +324,147 @@ struct window
 
 #ifdef HAVE_WINDOW_SYSTEM
 
+
+/* *************************************************************************** */
+/* begin MULTIPLE-CURSORS */
+
+/* Suffixes for the `mc` window pointer prefix. */
+struct multiple_cursors
+{
+  /* The recorded pixel width of the last line number drawn during redisplay */
+  int lnum_pixel_width;
+} mc;
+
+struct mc_matrix
+{
+  ptrdiff_t vpos_allocated;
+  ptrdiff_t vpos_used;
+  ptrdiff_t cursors_used[4];
+  enum mc_cache_type
+  {
+    MC_CACHE,
+    CH_CACHE,
+    FC_CACHE,
+    NO_CACHE
+  } cache_type;
+  struct mc_vpos
+  {
+    ptrdiff_t cache_allocated[4];
+    ptrdiff_t cache_used[4];
+    struct mc_contents
+    {
+      bool_bf same_p : 1;
+      struct glyph glyph;
+      int x;
+      int fx;
+      int y;
+      int fy;
+      int hpos;
+      int vpos;
+      int wd;
+      int h;
+      enum mc_cursor_type
+      {
+        /* NOTE:  The fringe bitmap framework relies upon MC_NO_FRINGE_BITMAP
+        having a value of zero (0). */
+        MC_NO_FRINGE_BITMAP,
+        MC_NO_CURSOR,
+        MC_RIGHT_FRINGE_BITMAP,
+        MC_LEFT_FRINGE_BITMAP,
+        MC_FRAMED_BOX,
+        MC_FILLED_BOX,
+        MC_HOLLOW_BOX,
+        MC_BAR,
+        MC_HBAR
+      } cursor_type;
+      int cursor_width;
+      struct mc_RGB
+      {
+        double red;
+        double green;
+        double blue;
+      } fg, bg;
+      bool_bf active_p : 1;
+      enum mc_flavor
+      {
+        NO_FLAVOR,
+        MC_GLYPH,
+        MC_GLYPHLESS,
+        MC_OVERLAY_ARROW_BITMAP,
+        MC_PILCROW,
+        MC_HOLLOW_RECTANGLE_RIGHT_ARROW,
+        MC_REVERSED_HOLLOW_RECTANGLE_RIGHT_ARROW,
+        MC_HOLLOW_RECTANGLE,
+        MC_VERTICAL_BAR_RIGHT_ARROW,
+        MC_REVERSED_VERTICAL_BAR_RIGHT_ARROW,
+        MC_VERTICAL_BAR,
+        MC_REVERSED_VERTICAL_BAR,
+        MC_VERTICAL_BAR_BACKSLASH
+      } glyph_flavor;
+      enum mc_row_position
+      {
+        PRE_ZV,
+        AT_ZV,
+        POST_ZV
+      } row_position;
+      bool_bf enabled_p : 1;
+    } *cache[4];
+  } *vpos;
+  /* Used elsewhere. */
+  struct mc_essentials
+  {
+    bool_bf active_p : 1;
+    struct mc_RGB ch_fg[3], fc_fg[3], sp_fg;
+    int fc_x;
+    int zv;
+    int zv_byte;
+  } essentials;
+  /* Used elsewhere. */
+  enum mc_engine_type
+  {
+    MULTIPLE_CURSORS,
+    HORIZONTAL_RULER,
+    VERTICAL_RULER,
+    FILL_COLUMN,
+    CURSOR_INDICATOR
+  } action_type;
+  /* Used elsewhere. */
+  enum mc_pre_scroll_clean_type
+  {
+    TRY_WINDOW_REUSING_CURRENT_MATRIX_DOWN,
+    TRY_WINDOW_REUSING_CURRENT_MATRIX_UP,
+    TRY_WINDOW_ID
+  } mc_pre_scroll_clean_type__from_where;
+  /* Used elsewhere. */
+  enum mc_draw_row_type
+  {
+    NOWHERE,
+    SCRIBE_ONE,
+    SCRIBE_TWO,
+    SCRIBE_THREE,
+    SKIPPED,
+    POST_CHANGED,
+    UNCHANGED,
+    SET_CURSOR_ONE,
+    SET_CURSOR_TWO
+  } mc_draw_row_type__from_where;
+  /* Used elsewhere. */
+  enum mc_redraw_row_type
+  {
+    UPDATE_WINDOW__REDRAW_OVERLAPPED_ROWS,
+    GUI_INSERT_GLYPHS,
+    GUI_FIX_OVERLAPPING_AREA,
+    DRAW_ROW_WITH_MOUSE_FACE,
+    EXPOSE_AREA_ONE,
+    EXPOSE_AREA_TWO,
+    EXPOSE_LINE
+  } mc_redraw_row_type__from_where;
+} mc_matrix;
+
+/* end MULTIPLE-CURSORS */
+/* *************************************************************************** */
+
+
     /* Cursor type of last cursor drawn on the window.  */
     enum text_cursor_kinds phys_cursor_type;
 
