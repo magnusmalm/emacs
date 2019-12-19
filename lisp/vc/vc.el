@@ -337,6 +337,10 @@
 ;;   Insert in BUFFER the revision log for the changes that will be
 ;;   received when performing a pull operation from REMOTE-LOCATION.
 ;;
+;; - log-search (pattern)
+;;
+;;   Search for PATTERN in the revision log.
+;;
 ;; - log-view-mode ()
 ;;
 ;;   Mode to use for the output of print-log.  This defaults to
@@ -1413,17 +1417,22 @@ remove from the list of ignored files."
 
 (defun vc-default-ignore (backend file &optional directory remove)
   "Ignore FILE under the VCS of DIRECTORY (default is `default-directory').
-FILE is a file wildcard, relative to the root directory of DIRECTORY.
+FILE is a wildcard specification, either relative to
+DIRECTORY or absolute.
 When called from Lisp code, if DIRECTORY is non-nil, the
 repository to use will be deduced by DIRECTORY; if REMOVE is
 non-nil, remove FILE from ignored files.
 Argument BACKEND is the backend you are using."
   (let ((ignore
 	 (vc-call-backend backend 'find-ignore-file (or directory default-directory)))
-	(pattern (file-relative-name
-		  (expand-file-name file) (file-name-directory file))))
+	file-path root-dir pattern)
+    (setq file-path (expand-file-name file directory))
+    (setq root-dir (file-name-directory ignore))
+    (when (not (string= (substring file-path 0 (length root-dir)) root-dir))
+      (error "Ignore spec %s is not below project root %s" file-path root-dir))
+    (setq pattern (substring file-path (length root-dir)))
     (if remove
-	(vc--remove-regexp pattern ignore)
+	(vc--remove-regexp (concat "^" (regexp-quote pattern ) "\\(\n\\|$\\)") ignore)
       (vc--add-line pattern ignore))))
 
 (defun vc-default-ignore-completion-table (backend file)
@@ -2525,6 +2534,25 @@ When called interactively with a prefix argument, prompt for REMOTE-LOCATION."
       (error "Buffer is not version controlled"))
     (vc-incoming-outgoing-internal backend (or remote-location "")
                                    "*vc-outgoing*" 'log-outgoing)))
+
+;;;###autoload
+(defun vc-log-search (pattern)
+  "Search the log of changes for PATTERN.
+
+PATTERN is usually interpreted as a regular expression.  However, its
+exact semantics is up to the backend's log search command; some can
+only match fixed strings.
+
+Display all entries that match log messages in long format.
+With a prefix argument, ask for a command to run that will output
+log entries."
+  (interactive (list (unless current-prefix-arg
+                       (read-regexp "Search log with pattern: "))))
+  (let ((backend (vc-deduce-backend)))
+    (unless backend
+      (error "Buffer is not version controlled"))
+    (vc-incoming-outgoing-internal backend pattern
+                                   "*vc-search-log*" 'log-search)))
 
 ;;;###autoload
 (defun vc-log-mergebase (_files rev1 rev2)

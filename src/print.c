@@ -81,7 +81,7 @@ static ptrdiff_t print_buffer_pos_byte;
      -N   the object will be printed several times and will take number N.
      N    the object has been printed so we can refer to it as #N#.
    print_number_index holds the largest N already used.
-   N has to be striclty larger than 0 since we need to distinguish -N.  */
+   N has to be strictly larger than 0 since we need to distinguish -N.  */
 static ptrdiff_t print_number_index;
 static void print_interval (INTERVAL interval, Lisp_Object printcharfun);
 
@@ -966,13 +966,12 @@ print_error_message (Lisp_Object data, Lisp_Object stream, const char *context,
     else
       sep = NULL;
 
-    for (; CONSP (tail); tail = XCDR (tail), sep = ", ")
+    FOR_EACH_TAIL (tail)
       {
-	Lisp_Object obj;
-
 	if (sep)
 	  write_string (sep, stream);
-	obj = XCAR (tail);
+	sep = ", ";
+	Lisp_Object obj = XCAR (tail);
 	if (!NILP (file_error)
 	    || EQ (errname, Qend_of_file) || EQ (errname, Quser_error))
 	  Fprinc (obj, stream);
@@ -1120,8 +1119,8 @@ print (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
       Vprint_number_table = Qnil;
     }
 
-  /* Construct Vprint_number_table for print-gensym and print-circle.  */
-  if (!NILP (Vprint_gensym) || !NILP (Vprint_circle))
+  /* Construct Vprint_number_table for print-circle.  */
+  if (!NILP (Vprint_circle))
     {
       /* Construct Vprint_number_table.
 	 This increments print_number_index for the objects added.  */
@@ -1135,9 +1134,12 @@ print (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
 	  ptrdiff_t i;
 
 	  for (i = 0; i < HASH_TABLE_SIZE (h); ++i)
-	    if (!NILP (HASH_HASH (h, i))
-		&& EQ (HASH_VALUE (h, i), Qt))
-	      Fremhash (HASH_KEY (h, i), Vprint_number_table);
+            {
+              Lisp_Object key =  HASH_KEY (h, i);
+	      if (!EQ (key, Qunbound)
+		  && EQ (HASH_VALUE (h, i), Qt))
+	        Fremhash (key, Vprint_number_table);
+            }
 	}
     }
 
@@ -1146,7 +1148,11 @@ print (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
 }
 
 #define PRINT_CIRCLE_CANDIDATE_P(obj)			   \
-  (STRINGP (obj) || CONSP (obj)				   \
+  ((STRINGP (obj)                                          \
+       && (string_intervals (obj)                          \
+	   || print_depth > 1				   \
+	   || !NILP (Vprint_continuous_numbering)))	   \
+   || CONSP (obj)					   \
    || (VECTORLIKEP (obj)				   \
        && (VECTORP (obj) || COMPILEDP (obj)		   \
 	   || CHAR_TABLE_P (obj) || SUB_CHAR_TABLE_P (obj) \
@@ -1156,13 +1162,14 @@ print (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
        && SYMBOLP (obj)					   \
        && !SYMBOL_INTERNED_P (obj)))
 
-/* Construct Vprint_number_table according to the structure of OBJ.
-   OBJ itself and all its elements will be added to Vprint_number_table
-   recursively if it is a list, vector, compiled function, char-table,
-   string (its text properties will be traced), or a symbol that has
-   no obarray (this is for the print-gensym feature).
-   The status fields of Vprint_number_table mean whether each object appears
-   more than once in OBJ: Qnil at the first time, and Qt after that.  */
+/* Construct Vprint_number_table for the print-circle feature
+   according to the structure of OBJ.  OBJ itself and all its elements
+   will be added to Vprint_number_table recursively if it is a list,
+   vector, compiled function, char-table, string (its text properties
+   will be traced), or a symbol that has no obarray (this is for the
+   print-gensym feature).  The status fields of Vprint_number_table
+   mean whether each object appears more than once in OBJ: Qnil at the
+   first time, and Qt after that.  */
 static void
 print_preprocess (Lisp_Object obj)
 {
@@ -1171,20 +1178,7 @@ print_preprocess (Lisp_Object obj)
   int loop_count = 0;
   Lisp_Object halftail;
 
-  /* Avoid infinite recursion for circular nested structure
-     in the case where Vprint_circle is nil.  */
-  if (NILP (Vprint_circle))
-    {
-      /* Give up if we go so deep that print_object will get an error.  */
-      /* See similar code in print_object.  */
-      if (print_depth >= PRINT_CIRCLE)
-	error ("Apparently circular structure being printed");
-
-      for (i = 0; i < print_depth; i++)
-	if (EQ (obj, being_printed[i]))
-	  return;
-      being_printed[print_depth] = obj;
-    }
+  eassert (!NILP (Vprint_circle));
 
   print_depth++;
   halftail = obj;
@@ -1195,33 +1189,28 @@ print_preprocess (Lisp_Object obj)
       if (!HASH_TABLE_P (Vprint_number_table))
 	Vprint_number_table = CALLN (Fmake_hash_table, QCtest, Qeq);
 
-      /* In case print-circle is nil and print-gensym is t,
-	 add OBJ to Vprint_number_table only when OBJ is a symbol.  */
-      if (! NILP (Vprint_circle) || SYMBOLP (obj))
-	{
-	  Lisp_Object num = Fgethash (obj, Vprint_number_table, Qnil);
-	  if (!NILP (num)
-	      /* If Vprint_continuous_numbering is non-nil and OBJ is a gensym,
-		 always print the gensym with a number.  This is a special for
-		 the lisp function byte-compile-output-docform.  */
-	      || (!NILP (Vprint_continuous_numbering)
-		  && SYMBOLP (obj)
-		  && !SYMBOL_INTERNED_P (obj)))
-	    { /* OBJ appears more than once.	Let's remember that.  */
-	      if (!FIXNUMP (num))
-		{
-		  print_number_index++;
-		  /* Negative number indicates it hasn't been printed yet.  */
-		  Fputhash (obj, make_fixnum (- print_number_index),
-			    Vprint_number_table);
-		}
-	      print_depth--;
-	      return;
+      Lisp_Object num = Fgethash (obj, Vprint_number_table, Qnil);
+      if (!NILP (num)
+	  /* If Vprint_continuous_numbering is non-nil and OBJ is a gensym,
+	     always print the gensym with a number.  This is a special for
+	     the lisp function byte-compile-output-docform.  */
+	  || (!NILP (Vprint_continuous_numbering)
+	      && SYMBOLP (obj)
+	      && !SYMBOL_INTERNED_P (obj)))
+	{ /* OBJ appears more than once.  Let's remember that.  */
+	  if (!FIXNUMP (num))
+	    {
+	      print_number_index++;
+	      /* Negative number indicates it hasn't been printed yet.  */
+	      Fputhash (obj, make_fixnum (- print_number_index),
+			Vprint_number_table);
 	    }
-	  else
-	    /* OBJ is not yet recorded.  Let's add to the table.  */
-	    Fputhash (obj, Qt, Vprint_number_table);
+	  print_depth--;
+	  return;
 	}
+      else
+	/* OBJ is not yet recorded.  Let's add to the table.  */
+	Fputhash (obj, Qt, Vprint_number_table);
 
       switch (XTYPE (obj))
 	{
@@ -1268,11 +1257,15 @@ print_preprocess (Lisp_Object obj)
 
 DEFUN ("print--preprocess", Fprint_preprocess, Sprint_preprocess, 1, 1, 0,
        doc: /* Extract sharing info from OBJECT needed to print it.
-Fills `print-number-table'.  */)
-  (Lisp_Object object)
+Fills `print-number-table' if `print-circle' is non-nil.  Does nothing
+if `print-circle' is nil.  */)
+     (Lisp_Object object)
 {
-  print_number_index = 0;
-  print_preprocess (object);
+  if (!NILP (Vprint_circle))
+    {
+      print_number_index = 0;
+      print_preprocess (object);
+    }
   return Qnil;
 }
 
@@ -1575,10 +1568,10 @@ print_vectorlike (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag,
 	print_object (Fhash_table_rehash_threshold (obj),
 		      printcharfun, escapeflag);
 
-	if (h->pure)
+	if (h->purecopy)
 	  {
 	    print_c_string (" purecopy ", printcharfun);
-	    print_object (h->pure ? Qt : Qnil, printcharfun, escapeflag);
+	    print_object (h->purecopy ? Qt : Qnil, printcharfun, escapeflag);
 	  }
 
 	print_c_string (" data ", printcharfun);
@@ -1593,13 +1586,16 @@ print_vectorlike (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag,
 
 	printchar ('(', printcharfun);
 	for (ptrdiff_t i = 0; i < size; i++)
-	  if (!NILP (HASH_HASH (h, i)))
-	    {
-	      if (i) printchar (' ', printcharfun);
-	      print_object (HASH_KEY (h, i), printcharfun, escapeflag);
-	      printchar (' ', printcharfun);
-	      print_object (HASH_VALUE (h, i), printcharfun, escapeflag);
-	    }
+          {
+            Lisp_Object key = HASH_KEY (h, i);
+	    if (!EQ (key, Qunbound))
+	      {
+	        if (i) printchar (' ', printcharfun);
+	        print_object (key, printcharfun, escapeflag);
+	        printchar (' ', printcharfun);
+	        print_object (HASH_VALUE (h, i), printcharfun, escapeflag);
+	      }
+          }
 
 	if (size < real_size)
 	  print_c_string (" ...", printcharfun);
@@ -1854,7 +1850,6 @@ print_object (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
       /* Simple but incomplete way.  */
       int i;
 
-      /* See similar code in print_preprocess.  */
       if (print_depth >= PRINT_CIRCLE)
 	error ("Apparently circular structure being printed");
 
@@ -2080,8 +2075,7 @@ print_object (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
       else if (print_quoted && CONSP (XCDR (obj)) && NILP (XCDR (XCDR (obj)))
 	       && new_backquote_output
 	       && (EQ (XCAR (obj), Qcomma)
-		   || EQ (XCAR (obj), Qcomma_at)
-		   || EQ (XCAR (obj), Qcomma_dot)))
+		   || EQ (XCAR (obj), Qcomma_at)))
 	{
 	  print_object (XCAR (obj), printcharfun, false);
 	  new_backquote_output--;
@@ -2092,45 +2086,32 @@ print_object (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
 	{
 	  printchar ('(', printcharfun);
 
-	  Lisp_Object halftail = obj;
-
 	  /* Negative values of print-length are invalid in CL.
 	     Treat them like nil, as CMUCL does.  */
 	  intmax_t print_length = (FIXNATP (Vprint_length)
 				   ? XFIXNAT (Vprint_length)
 				   : INTMAX_MAX);
-
+	  Lisp_Object objtail = Qnil;
 	  intmax_t i = 0;
-	  while (CONSP (obj))
+	  FOR_EACH_TAIL_SAFE (obj)
 	    {
-	      /* Detect circular list.  */
-	      if (NILP (Vprint_circle))
+	      if (i != 0)
 		{
-		  /* Simple but incomplete way.  */
-		  if (i != 0 && EQ (obj, halftail))
+		  printchar (' ', printcharfun);
+
+		  if (!NILP (Vprint_circle))
 		    {
-		      int len = sprintf (buf, " . #%"PRIdMAX, i >> 1);
-		      strout (buf, len, len, printcharfun);
-		      goto end_of_list;
-		    }
-		}
-	      else
-		{
-		  /* With the print-circle feature.  */
-		  if (i != 0)
-		    {
-		      Lisp_Object num = Fgethash (obj, Vprint_number_table, Qnil);
+		      /* With the print-circle feature.  */
+		      Lisp_Object num = Fgethash (obj, Vprint_number_table,
+						  Qnil);
 		      if (FIXNUMP (num))
 			{
-			  print_c_string (" . ", printcharfun);
+			  print_c_string (". ", printcharfun);
 			  print_object (obj, printcharfun, escapeflag);
 			  goto end_of_list;
 			}
 		    }
 		}
-
-	      if (i)
-		printchar (' ', printcharfun);
 
 	      if (print_length <= i)
 		{
@@ -2140,17 +2121,23 @@ print_object (Lisp_Object obj, Lisp_Object printcharfun, bool escapeflag)
 
 	      i++;
 	      print_object (XCAR (obj), printcharfun, escapeflag);
+	      objtail = XCDR (obj);
+	    }
 
-	      obj = XCDR (obj);
-	      if (!(i & 1))
-		halftail = XCDR (halftail);
-	  }
-
-	  /* OBJ non-nil here means it's the end of a dotted list.  */
-	  if (!NILP (obj))
+	  /* OBJTAIL non-nil here means it's the end of a dotted list
+	     or FOR_EACH_TAIL_SAFE detected a circular list.  */
+	  if (!NILP (objtail))
 	    {
 	      print_c_string (" . ", printcharfun);
-	      print_object (obj, printcharfun, escapeflag);
+
+	      if (CONSP (objtail) && NILP (Vprint_circle))
+		{
+		  int len = sprintf (buf, "#%"PRIdMAX, i >> 1);
+		  strout (buf, len, len, printcharfun);
+		  goto end_of_list;
+		}
+
+	      print_object (objtail, printcharfun, escapeflag);
 	    }
 
 	end_of_list:

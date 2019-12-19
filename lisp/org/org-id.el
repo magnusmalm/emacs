@@ -241,7 +241,7 @@ Create an ID if necessary."
   "Get the ID property of the entry at point-or-marker POM.
 If POM is nil, refer to the entry at point.
 If the entry does not have an ID, the function returns nil.
-However, when CREATE is non nil, create an ID if none is present already.
+However, when CREATE is non-nil, create an ID if none is present already.
 PREFIX will be passed through to `org-id-new'.
 In any case, the ID of the entry is returned."
   (org-with-point-at pom
@@ -356,7 +356,7 @@ So a typical ID could look like \"Org:4nd91V40HI\"."
   "Return string with random (version 4) UUID."
   (let ((rnd (md5 (format "%s%s%s%s%s%s%s"
 			  (random)
-			  (encode-time nil 'list)
+			  (time-convert nil 'list)
 			  (user-uid)
 			  (emacs-pid)
 			  (user-full-name)
@@ -412,18 +412,21 @@ The input I may be a character, or a single-letter string."
     r))
 
 (defun org-id-time-to-b36 (&optional time)
-  "Encode TIME as a 10-digit string.
+  "Encode TIME as a 12-digit string.
 This string holds the time to micro-second accuracy, and can be decoded
 using `org-id-decode'."
-  (setq time (encode-time time 'list))
+  ;; FIXME: If TIME represents N seconds after the epoch, then
+  ;; this encoding assumes 0 <= N < 110075314176 = (* (expt 36 4) 65536),
+  ;; i.e., that TIME is from 1970-01-01 00:00:00 to 5458-02-23 20:09:36 UTC.
+  (setq time (time-convert time 'list))
   (concat (org-id-int-to-b36 (nth 0 time) 4)
 	  (org-id-int-to-b36 (nth 1 time) 4)
-	  (org-id-int-to-b36 (or (nth 2 time) 0) 4)))
+	  (org-id-int-to-b36 (nth 2 time) 4)))
 
 (defun org-id-decode (id)
   "Split ID into the prefix and the time value that was used to create it.
 The return value is (prefix . time) where PREFIX is nil or a string,
-and time is the usual three-integer representation of time."
+and TIME is a Lisp time value (HI LO USEC)."
   (let (prefix time parts)
     (setq parts (org-split-string id ":"))
     (if (= 2 (length parts))

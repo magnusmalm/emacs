@@ -440,7 +440,7 @@ REV is the revision to check out."
     (if vc-cvs-use-edit
         (vc-cvs-command nil 0 file "unedit")
       ;; Make the file read-only by switching off all w-bits
-      (set-file-modes file (logand (file-modes file) 3950)))))
+      (set-file-modes file (logand (file-modes file) #o7555)))))
 
 (defun vc-cvs-merge-file (file)
   "Accept a file merge request, prompting for revisions."
@@ -1180,11 +1180,11 @@ is non-nil."
            (parsed-time (progn (require 'parse-time)
                                (parse-time-string (concat time " +0000")))))
       (cond ((and (not (string-match "\\+" time))
-                  (car parsed-time)
+                  (decoded-time-second parsed-time)
                   ;; Compare just the seconds part of the file time,
                   ;; since CVS file time stamp resolution is just 1 second.
-		  (= (encode-time mtime 'integer)
-		     (encode-time parsed-time 'integer)))
+		  (= (time-convert mtime 'integer)
+		     (time-convert (encode-time parsed-time) 'integer)))
              (vc-file-setprop file 'vc-checkout-time mtime)
              (if set-state (vc-file-setprop file 'vc-state 'up-to-date)))
             (t

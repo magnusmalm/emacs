@@ -842,7 +842,7 @@ usage: (define-charset-internal ...)  */)
   /* Charset attr vector.  */
   Lisp_Object attrs;
   Lisp_Object val;
-  EMACS_UINT hash_code;
+  Lisp_Object hash_code;
   struct Lisp_Hash_Table *hash_table = XHASH_TABLE (Vcharset_hash_table);
   int i, j;
   struct charset charset;
@@ -2292,14 +2292,18 @@ init_charset (void)
     {
       /* This used to be non-fatal (dir_warning), but it should not
          happen, and if it does sooner or later it will cause some
-         obscure problem (eg bug#6401), so better abort.  */
-      fprintf (stderr, "Error: charsets directory not found:\n\
-%s\n\
-Emacs will not function correctly without the character map files.\n%s\
-Please check your installation!\n",
-               SDATA (tempdir),
-               egetenv("EMACSDATA") ? "The EMACSDATA environment \
-variable is set, maybe it has the wrong value?\n" : "");
+         obscure problem (eg bug#6401), so better exit.  */
+      fprintf (stderr,
+	       ("Error: %s: %s\n"
+		"Emacs will not function correctly "
+		"without the character map files.\n"
+		"%s"
+		"Please check your installation!\n"),
+	       SDATA (tempdir), strerror (errno),
+	       (egetenv ("EMACSDATA")
+		? ("The EMACSDATA environment variable is set.  "
+		   "Maybe it has the wrong value?\n")
+		: ""));
       exit (1);
     }
 

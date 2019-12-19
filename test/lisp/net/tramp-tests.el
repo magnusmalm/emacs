@@ -56,6 +56,7 @@
 (declare-function tramp-list-tramp-buffers "tramp-cmds")
 (declare-function tramp-method-out-of-band-p "tramp-sh")
 (declare-function tramp-smb-get-localname "tramp-smb")
+(declare-function tramp-time-diff "tramp")
 (defvar auto-save-file-name-transforms)
 (defvar tramp-connection-properties)
 (defvar tramp-copy-size-limit)
@@ -99,11 +100,12 @@
 
 (setq auth-source-save-behavior nil
       password-cache-expiry nil
-      tramp-verbose 0
+      remote-file-name-inhibit-cache nil
       tramp-cache-read-persistent-data t ;; For auth-sources.
       tramp-copy-size-limit nil
       tramp-message-show-message nil
-      tramp-persistency-file-name nil)
+      tramp-persistency-file-name nil
+      tramp-verbose 0)
 
 ;; This should happen on hydra only.
 (when (getenv "EMACS_HYDRA_CI")
@@ -1954,36 +1956,40 @@ properly.  BODY shall not contain a timeout."
       (substitute-in-file-name "/method:host:/:/path//foo")
       "/method:host:/:/path//foo"))
 
-    (should
-     (string-equal (substitute-in-file-name "/method:host://~foo") "/~foo"))
-    (should
-     (string-equal
-      (substitute-in-file-name "/method:host:/~foo") "/method:host:/~foo"))
-    (should
-     (string-equal
-      (substitute-in-file-name "/method:host:/path//~foo") "/~foo"))
-    ;; (substitute-in-file-name "/path/~foo") expands only for a local
-    ;; user "foo" to "/~foo"".  Otherwise, it doesn't expand.
-    (should
-     (string-equal
-      (substitute-in-file-name
-       "/method:host:/path/~foo") "/method:host:/path/~foo"))
-    ;; Quoting local part.
-    (should
-     (string-equal
-      (substitute-in-file-name "/method:host:/://~foo")
-      "/method:host:/://~foo"))
-    (should
-     (string-equal
-      (substitute-in-file-name "/method:host:/:/~foo") "/method:host:/:/~foo"))
-    (should
-     (string-equal
-      (substitute-in-file-name
-       "/method:host:/:/path//~foo") "/method:host:/:/path//~foo"))
-    (should
-     (string-equal
-      (substitute-in-file-name
-       "/method:host:/:/path/~foo") "/method:host:/:/path/~foo"))
+    ;; Forwhatever reasons, the following tests let Emacs crash for
+    ;; Emacs 24 and Emacs 25, occasionally. No idea what's up.
+    (when (or (tramp--test-emacs26-p) (tramp--test-emacs27-p))
+      (should
+       (string-equal (substitute-in-file-name "/method:host://~foo") "/~foo"))
+      (should
+       (string-equal
+	(substitute-in-file-name "/method:host:/~foo") "/method:host:/~foo"))
+      (should
+       (string-equal
+	(substitute-in-file-name "/method:host:/path//~foo") "/~foo"))
+      ;; (substitute-in-file-name "/path/~foo") expands only for a local
+      ;; user "foo" to "/~foo"".  Otherwise, it doesn't expand.
+      (should
+       (string-equal
+	(substitute-in-file-name
+	 "/method:host:/path/~foo") "/method:host:/path/~foo"))
+      ;; Quoting local part.
+      (should
+       (string-equal
+	(substitute-in-file-name "/method:host:/://~foo")
+	"/method:host:/://~foo"))
+      (should
+       (string-equal
+	(substitute-in-file-name
+	 "/method:host:/:/~foo") "/method:host:/:/~foo"))
+      (should
+       (string-equal
+	(substitute-in-file-name
+	 "/method:host:/:/path//~foo") "/method:host:/:/path//~foo"))
+      (should
+       (string-equal
+	(substitute-in-file-name
+	 "/method:host:/:/path/~foo") "/method:host:/:/path/~foo")))
 
     (let (process-environment)
       (should
@@ -2411,9 +2417,7 @@ This checks also `file-name-as-directory', `file-name-directory',
 	  (unwind-protect
 	      ;; FIXME: This fails on my QNAP server, see
 	      ;; /share/Web/owncloud/data/owncloud.log
-	      (unless (and (tramp--test-nextcloud-p)
-			   (or (not (file-remote-p source))
-			       (not (file-remote-p target))))
+	      (unless (tramp--test-nextcloud-p)
 		(make-directory source)
 		(should (file-directory-p source))
 		(write-region "foo" nil (expand-file-name "foo" source))
@@ -2436,8 +2440,7 @@ This checks also `file-name-as-directory', `file-name-directory',
 	  (unwind-protect
 	      ;; FIXME: This fails on my QNAP server, see
 	      ;; /share/Web/owncloud/data/owncloud.log
-	      (unless
-		  (and (tramp--test-nextcloud-p) (not (file-remote-p source)))
+	      (unless (tramp--test-nextcloud-p)
 		(make-directory source)
 		(should (file-directory-p source))
 		(write-region "foo" nil (expand-file-name "foo" source))
@@ -2827,7 +2830,7 @@ This tests also `file-directory-p' and `file-accessible-directory-p'."
 	       (looking-at-p
 		(concat
 		 ;; There might be a summary line.
-		 "\\(total.+[[:digit:]]+\n\\)?"
+		 "\\(total.+[[:digit:]]+ ?[kKMGTPEZY]?i?B?\n\\)?"
 		 ;; We don't know in which order ".", ".." and "foo" appear.
 		 (format
 		  "\\(.+ %s\\( ->.+\\)?\n\\)\\{%d\\}"
@@ -3006,22 +3009,28 @@ This tests also `access-file', `file-readable-p',
 	    ;; We do not test inodes and device numbers.
 	    (setq attr (file-attributes tmp-name1))
 	    (should (consp attr))
-	    (should (null (car attr)))
-	    (should (numberp (nth 1 attr))) ;; Link.
-	    (should (numberp (nth 2 attr))) ;; Uid.
-	    (should (numberp (nth 3 attr))) ;; Gid.
-	    ;; Last access time.
-	    (should (stringp (current-time-string (nth 4 attr))))
-	    ;; Last modification time.
-	    (should (stringp (current-time-string (nth 5 attr))))
-	    ;; Last status change time.
-	    (should (stringp (current-time-string (nth 6 attr))))
-	    (should (numberp (nth 7 attr))) ;; Size.
-	    (should (stringp (nth 8 attr))) ;; Modes.
+	    (should (null (tramp-compat-file-attribute-type attr)))
+	    (should (numberp (tramp-compat-file-attribute-link-number attr)))
+	    (should (numberp (tramp-compat-file-attribute-user-id attr)))
+	    (should (numberp (tramp-compat-file-attribute-group-id attr)))
+	    (should
+	     (stringp
+	      (current-time-string
+	       (tramp-compat-file-attribute-access-time attr))))
+	    (should
+	     (stringp
+	      (current-time-string
+	       (tramp-compat-file-attribute-modification-time attr))))
+	    (should
+	     (stringp
+	      (current-time-string
+	       (tramp-compat-file-attribute-status-change-time attr))))
+	    (should (numberp (tramp-compat-file-attribute-size attr)))
+	    (should (stringp (tramp-compat-file-attribute-modes attr)))
 
 	    (setq attr (file-attributes tmp-name1 'string))
-	    (should (stringp (nth 2 attr))) ;; Uid.
-	    (should (stringp (nth 3 attr))) ;; Gid.
+	    (should (stringp (tramp-compat-file-attribute-user-id attr)))
+	    (should (stringp (tramp-compat-file-attribute-group-id attr)))
 
 	    (tramp--test-ignore-make-symbolic-link-error
 	     (should-error
@@ -3040,7 +3049,7 @@ This tests also `access-file', `file-readable-p',
 	       (string-equal
 		(funcall
 		 (if quoted #'tramp-compat-file-name-quote #'identity)
-		 (car attr))
+		 (tramp-compat-file-attribute-type attr))
 		(file-remote-p (file-truename tmp-name1) 'localname)))
 	      (delete-file tmp-name2))
 
@@ -3059,7 +3068,7 @@ This tests also `access-file', `file-readable-p',
 	      (setq attr (file-attributes tmp-name2))
 	      (should
 	       (string-equal
-		(car attr)
+		(tramp-compat-file-attribute-type attr)
 		(tramp-file-name-localname
 		 (tramp-dissect-file-name tmp-name3))))
 	      (delete-file tmp-name2))
@@ -3075,19 +3084,79 @@ This tests also `access-file', `file-readable-p',
 	    (when (tramp--test-sh-p)
 	      (should (file-ownership-preserved-p tmp-name1 'group)))
 	    (setq attr (file-attributes tmp-name1))
-	    (should (eq (car attr) t)))
+	    (should (eq (tramp-compat-file-attribute-type attr) t)))
 
 	;; Cleanup.
 	(ignore-errors (delete-directory tmp-name1))
 	(ignore-errors (delete-file tmp-name1))
 	(ignore-errors (delete-file tmp-name2))))))
 
+(defvar tramp--test-start-time nil
+  "Keep the start time of the current test, a float number.")
+
 (defsubst tramp--test-file-attributes-equal-p (attr1 attr2)
   "Check, whether file attributes ATTR1 and ATTR2 are equal.
-They might differ only in access time."
-  (setcar (nthcdr 4 attr1) tramp-time-dont-know)
-  (setcar (nthcdr 4 attr2) tramp-time-dont-know)
-  (equal attr1 attr2))
+They might differ only in time attributes or directory size."
+  (let ((attr1 (copy-sequence attr1))
+	(attr2 (copy-sequence attr2))
+	(start-time (- tramp--test-start-time 10)))
+    ;; Link number.  For directories, it includes the number of
+    ;; subdirectories.  Set it to 1.
+    (when (eq (tramp-compat-file-attribute-type attr1) t)
+      (setcar (nthcdr 1 attr1) 1))
+    (when (eq (tramp-compat-file-attribute-type attr2) t)
+      (setcar (nthcdr 1 attr2) 1))
+    ;; Access time.
+    (setcar (nthcdr 4 attr1) tramp-time-dont-know)
+    (setcar (nthcdr 4 attr2) tramp-time-dont-know)
+    ;; Modification time.  If any of the time values is "don't know",
+    ;; we cannot compare, and we normalize the time stamps.  If the
+    ;; time value is newer than the test start time, normalize it,
+    ;; because due to caching the time stamps could differ slightly (a
+    ;; few seconds).  We use a test start time minus 10 seconds, in
+    ;; order to compensate a possible timestamp resolution higher than
+    ;; a second on the remote machine.
+    (when (or (tramp-compat-time-equal-p
+	       (tramp-compat-file-attribute-modification-time attr1)
+	       tramp-time-dont-know)
+	      (tramp-compat-time-equal-p
+	       (tramp-compat-file-attribute-modification-time attr2)
+	       tramp-time-dont-know))
+      (setcar (nthcdr 5 attr1) tramp-time-dont-know)
+      (setcar (nthcdr 5 attr2) tramp-time-dont-know))
+    (when (< start-time
+	     (float-time (tramp-compat-file-attribute-modification-time attr1)))
+      (setcar (nthcdr 5 attr1) tramp-time-dont-know))
+    (when (< start-time
+	     (float-time (tramp-compat-file-attribute-modification-time attr2)))
+      (setcar (nthcdr 5 attr2) tramp-time-dont-know))
+    ;; Status change time.  Dito.
+    (when (or (tramp-compat-time-equal-p
+	       (tramp-compat-file-attribute-status-change-time attr1)
+	       tramp-time-dont-know)
+	      (tramp-compat-time-equal-p
+	       (tramp-compat-file-attribute-status-change-time attr2)
+	       tramp-time-dont-know))
+      (setcar (nthcdr 6 attr1) tramp-time-dont-know)
+      (setcar (nthcdr 6 attr2) tramp-time-dont-know))
+    (when
+	(< start-time
+	   (float-time
+	    (tramp-compat-file-attribute-status-change-time attr1)))
+      (setcar (nthcdr 6 attr1) tramp-time-dont-know))
+    (when
+	(< start-time
+	   (float-time (tramp-compat-file-attribute-status-change-time attr2)))
+      (setcar (nthcdr 6 attr2) tramp-time-dont-know))
+    ;; Size.  Set it to 0 for directories, because it might have
+    ;; changed.  For example the upper directory "../".
+    (when (eq (tramp-compat-file-attribute-type attr1) t)
+      (setcar (nthcdr 7 attr1) 0))
+    (when (eq (tramp-compat-file-attribute-type attr2) t)
+      (setcar (nthcdr 7 attr2) 0))
+    ;; The check.
+    (unless (equal attr1 attr2) (tramp--test-message "%S\n%S" attr1 attr2))
+    (equal attr1 attr2)))
 
 ;; This isn't 100% correct, but better than no explainer at all.
 (put #'tramp--test-file-attributes-equal-p 'ert-explainer #'ert--explain-equal)
@@ -3107,32 +3176,31 @@ They might differ only in access time."
 	  (progn
 	    (make-directory tmp-name1)
 	    (should (file-directory-p tmp-name1))
+	    (setq tramp--test-start-time
+		  (float-time
+		   (tramp-compat-file-attribute-modification-time
+		    (file-attributes tmp-name1))))
 	    (make-directory tmp-name2)
 	    (should (file-directory-p tmp-name2))
 	    (write-region "foo" nil (expand-file-name "foo" tmp-name2))
 	    (write-region "bar" nil (expand-file-name "bar" tmp-name2))
 	    (write-region "boz" nil (expand-file-name "boz" tmp-name2))
+
 	    (setq attr (directory-files-and-attributes tmp-name2))
 	    (should (consp attr))
-	    ;; Dumb remote shells without perl(1) or stat(1) are not
-	    ;; able to return the date correctly.  They say "don't know".
 	    (dolist (elt attr)
-	      (unless
-		  (tramp-compat-time-equal-p
-		   (nth
-		    5 (file-attributes (expand-file-name (car elt) tmp-name2)))
-		   tramp-time-dont-know)
-		(should
-		 (tramp--test-file-attributes-equal-p
-		  (file-attributes (expand-file-name (car elt) tmp-name2))
-		  (cdr elt)))))
+	      (should
+	       (tramp--test-file-attributes-equal-p
+		(file-attributes (expand-file-name (car elt) tmp-name2))
+		(cdr elt))))
+
 	    (setq attr (directory-files-and-attributes tmp-name2 'full))
+	    (should (consp attr))
 	    (dolist (elt attr)
-	      (unless (tramp-compat-time-equal-p
-		       (nth 5 (file-attributes (car elt))) tramp-time-dont-know)
-		(should
-		 (tramp--test-file-attributes-equal-p
-		  (file-attributes (car elt)) (cdr elt)))))
+	      (should
+	       (tramp--test-file-attributes-equal-p
+		(file-attributes (car elt)) (cdr elt))))
+
 	    (setq attr (directory-files-and-attributes tmp-name2 nil "^b"))
 	    (should (equal (mapcar #'car attr) '("bar" "boz"))))
 
@@ -3143,7 +3211,13 @@ They might differ only in access time."
   "Check `file-modes'.
 This tests also `file-executable-p', `file-writable-p' and `set-file-modes'."
   (skip-unless (tramp--test-enabled))
-  (skip-unless (or (tramp--test-sh-p) (tramp--test-sudoedit-p)))
+  (skip-unless
+   (or (tramp--test-sh-p) (tramp--test-sudoedit-p)
+       ;; Not all tramp-gvfs.el methods support changing the file mode.
+       (and
+	(tramp--test-gvfs-p)
+	(string-match-p
+	 "ftp" (file-remote-p tramp-test-temporary-file-directory 'method)))))
 
   (dolist (quoted (if (tramp--test-expensive-test) '(nil t) '(nil)))
     (let ((tmp-name (tramp--test-make-temp-name nil quoted)))
@@ -3159,7 +3233,8 @@ This tests also `file-executable-p', `file-writable-p' and `set-file-modes'."
 	    (should (= (file-modes tmp-name) #o444))
 	    (should-not (file-executable-p tmp-name))
 	    ;; A file is always writable for user "root".
-	    (unless (zerop (nth 2 (file-attributes tmp-name)))
+	    (unless (zerop (tramp-compat-file-attribute-user-id
+			    (file-attributes tmp-name)))
 	      (should-not (file-writable-p tmp-name))))
 
 	;; Cleanup.
@@ -3195,7 +3270,8 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 	   (tmp-name3 (tramp--test-make-temp-name 'local quoted))
 	   (tmp-name4 (tramp--test-make-temp-name nil quoted))
 	   (tmp-name5
-	    (expand-file-name (file-name-nondirectory tmp-name1) tmp-name4)))
+	    (expand-file-name (file-name-nondirectory tmp-name1) tmp-name4))
+	   (tmp-name6 (tramp--test-make-temp-name nil quoted)))
       ;; Check `make-symbolic-link'.
       (unwind-protect
 	  (tramp--test-ignore-make-symbolic-link-error
@@ -3263,17 +3339,20 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 	       (if quoted #'tramp-compat-file-name-unquote #'identity)
 	       (file-remote-p tmp-name1 'localname))
 	      (file-symlink-p tmp-name5)))
-	    ;; `smbclient' does not show symlinks in directories, so
-	    ;; we cannot delete a non-empty directory.  We delete the
-	    ;; file explicitly.
-	    (delete-file tmp-name5))
+	    ;; Check, that files in symlinked directories still work.
+	    (make-symbolic-link tmp-name4 tmp-name6)
+	    (write-region "foo" nil (expand-file-name "foo" tmp-name6))
+	    (delete-file (expand-file-name "foo" tmp-name6))
+	    (should-not (file-exists-p (expand-file-name "foo" tmp-name4)))
+	    (should-not (file-exists-p (expand-file-name "foo" tmp-name6))))
 
 	;; Cleanup.
-	(ignore-errors
-	  (delete-file tmp-name1)
-	  (delete-file tmp-name2)
-	  (delete-file tmp-name3)
-	  (delete-directory tmp-name4 'recursive)))
+	(ignore-errors (delete-file tmp-name1))
+	(ignore-errors (delete-file tmp-name2))
+	(ignore-errors (delete-file tmp-name3))
+	(ignore-errors (delete-file tmp-name5))
+	(ignore-errors (delete-file tmp-name6))
+	(ignore-errors (delete-directory tmp-name4 'recursive)))
 
       ;; Check `add-name-to-file'.
       (unwind-protect
@@ -3406,7 +3485,9 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 		(setq tmp-name3 (concat (file-remote-p tmp-name3) tmp-name2)))))
 
 	;; Cleanup.
-	(ignore-errors (delete-directory tmp-name1 'recursive)))
+	(ignore-errors
+	  (delete-file tmp-name3)
+	  (delete-directory tmp-name1 'recursive)))
 
       ;; Detect cyclic symbolic links.
       (unwind-protect
@@ -3443,7 +3524,8 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
   "Check `set-file-times' and `file-newer-than-file-p'."
   (skip-unless (tramp--test-enabled))
   (skip-unless
-   (or (tramp--test-adb-p) (tramp--test-sh-p) (tramp--test-sudoedit-p)))
+   (or (tramp--test-adb-p) (tramp--test-gvfs-p)
+       (tramp--test-sh-p) (tramp--test-sudoedit-p)))
 
   (dolist (quoted (if (tramp--test-expensive-test) '(nil t) '(nil)))
     (let ((tmp-name1 (tramp--test-make-temp-name nil quoted))
@@ -3453,16 +3535,22 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 	  (progn
 	    (write-region "foo" nil tmp-name1)
 	    (should (file-exists-p tmp-name1))
-	    (should (consp (nth 5 (file-attributes tmp-name1))))
+	    (should (consp (tramp-compat-file-attribute-modification-time
+			    (file-attributes tmp-name1))))
 	    ;; Skip the test, if the remote handler is not able to set
 	    ;; the correct time.
 	    (skip-unless (set-file-times tmp-name1 (seconds-to-time 1)))
 	    ;; Dumb remote shells without perl(1) or stat(1) are not
 	    ;; able to return the date correctly.  They say "don't know".
 	    (unless (tramp-compat-time-equal-p
-		     (nth 5 (file-attributes tmp-name1)) tramp-time-dont-know)
+		     (tramp-compat-file-attribute-modification-time
+		      (file-attributes tmp-name1))
+		     tramp-time-dont-know)
 	      (should
-	       (equal (nth 5 (file-attributes tmp-name1)) (seconds-to-time 1)))
+	       (tramp-compat-time-equal-p
+                (tramp-compat-file-attribute-modification-time
+		 (file-attributes tmp-name1))
+		(seconds-to-time 1)))
 	      (write-region "bla" nil tmp-name2)
 	      (should (file-exists-p tmp-name2))
 	      (should (file-newer-than-file-p tmp-name2 tmp-name1))
@@ -3926,7 +4014,7 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
   (let ((proc (get-buffer-process (current-buffer))))
     (when (processp proc)
       (tramp--test-message
-       "cmd: %s\n%s" (process-command proc) (buffer-string))))
+       "cmd: %s\nbuf:\n%s\n---" (process-command proc) (buffer-string))))
   (ert-fail (format "`%s' timed out" (ert-test-name (ert-running-test)))))
 
 (ert-deftest tramp-test29-start-file-process ()
@@ -4109,8 +4197,9 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 	    (with-timeout (10 (tramp--test-timeout-handler))
 	      (while (accept-process-output proc 0 nil t)))
 	    ;; We cannot use `string-equal', because tramp-adb.el
-	    ;; echoes also the sent string.
-	    (should (string-match "killed\n\\'" (buffer-string))))
+	    ;; echoes also the sent string.  And a remote macOS sends
+	    ;; a slightly modified string.
+	    (should (string-match "killed.*\n\\'" (buffer-string))))
 
 	;; Cleanup.
 	(ignore-errors (delete-process proc)))
@@ -4324,7 +4413,7 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 	      "foo"
 	      (funcall
 	       this-shell-command-to-string
-	       (format "echo -n ${%s:?bla}" envvar))))))
+	       (format "echo -n ${%s:-bla}" envvar))))))
 
       (unwind-protect
 	  ;; Set the empty value.
@@ -4336,7 +4425,7 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 	      "bla"
 	      (funcall
 	       this-shell-command-to-string
-	       (format "echo -n ${%s:?bla}" envvar))))
+	       (format "echo -n ${%s:-bla}" envvar))))
 	    ;; Variable is set.
 	    (should
 	     (string-match
@@ -4358,7 +4447,7 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 	      "foo"
 	      (funcall
 	       this-shell-command-to-string
-	       (format "echo -n ${%s:?bla}" envvar))))
+	       (format "echo -n ${%s:-bla}" envvar))))
 	    (let ((process-environment
 		   (cons envvar process-environment)))
 	      ;; Variable is unset.
@@ -4367,12 +4456,14 @@ This tests also `make-symbolic-link', `file-truename' and `add-name-to-file'."
 		"bla"
 		(funcall
 		 this-shell-command-to-string
-		 (format "echo -n ${%s:?bla}" envvar))))
+		 (format "echo -n ${%s:-bla}" envvar))))
 	      ;; Variable is unset.
 	      (should-not
 	       (string-match
 		(regexp-quote envvar)
-		(funcall this-shell-command-to-string "env")))))))))
+		;; We must remove PS1, the output is truncated otherwise.
+		(funcall
+		 this-shell-command-to-string "printenv | grep -v PS1")))))))))
 
 ;; This test is inspired by Bug#27009.
 (ert-deftest tramp-test33-environment-variables-and-port-numbers ()
@@ -5004,6 +5095,15 @@ Several special characters do not work properly there."
       (file-truename tramp-test-temporary-file-directory) nil
     (string-match "^HP-UX" (tramp-get-connection-property v "uname" ""))))
 
+(defun tramp--test-ksh-p ()
+  "Check, whether the remote shell is ksh.
+ksh93 makes some strange conversions of non-latin characters into
+a $'' syntax."
+  ;; We must refill the cache.  `file-truename' does it.
+  (with-parsed-tramp-file-name
+      (file-truename tramp-test-temporary-file-directory) nil
+    (string-match "ksh$" (tramp-get-connection-property v "remote-shell" ""))))
+
 (defun tramp--test-mock-p ()
   "Check, whether the mock method is used.
 This does not support external Emacs calls."
@@ -5072,7 +5172,8 @@ This requires restrictions of file name syntax."
 	   (tmp-name1 (tramp--test-make-temp-name nil quoted))
 	   (tmp-name2 (tramp--test-make-temp-name 'local quoted))
 	   (files (delq nil files))
-	   (process-environment process-environment))
+	   (process-environment process-environment)
+	   (sorted-files (sort (copy-sequence files) #'string-lessp)))
       (unwind-protect
 	  (progn
 	    (make-directory tmp-name1)
@@ -5108,7 +5209,7 @@ This requires restrictions of file name syntax."
 		   (string-equal
 		    (funcall
 		     (if quoted #'tramp-compat-file-name-quote #'identity)
-		     (car (file-attributes file3)))
+		     (tramp-compat-file-attribute-type (file-attributes file3)))
 		    (file-remote-p (file-truename file1) 'localname)))
 		  ;; Check file contents.
 		  (with-temp-buffer
@@ -5119,10 +5220,20 @@ This requires restrictions of file name syntax."
 	    ;; Check file names.
 	    (should (equal (directory-files
 			    tmp-name1 nil directory-files-no-dot-files-regexp)
-			   (sort (copy-sequence files) #'string-lessp)))
+			   sorted-files))
 	    (should (equal (directory-files
 			    tmp-name2 nil directory-files-no-dot-files-regexp)
-			   (sort (copy-sequence files) #'string-lessp)))
+			   sorted-files))
+	    (should (equal (mapcar
+			    #'car
+			    (directory-files-and-attributes
+			     tmp-name1 nil directory-files-no-dot-files-regexp))
+			   sorted-files))
+	    (should (equal (mapcar
+			    #'car
+			    (directory-files-and-attributes
+			     tmp-name2 nil directory-files-no-dot-files-regexp))
+			   sorted-files))
 
 	    ;; `substitute-in-file-name' could return different
 	    ;; values.  For `adb', there could be strange file
@@ -5195,7 +5306,10 @@ This requires restrictions of file name syntax."
 		(should-not (file-exists-p file1))))
 
 	    ;; Check, that environment variables are set correctly.
-	    (when (and (tramp--test-expensive-test) (tramp--test-sh-p))
+            ;; We do not run on macOS due to encoding problems.  See
+            ;; Bug#36940.
+	    (when (and (tramp--test-expensive-test) (tramp--test-sh-p)
+		       (not (eq system-type 'darwin)))
 	      (dolist (elt files)
 		(let ((envvar (concat "VAR_" (upcase (md5 elt))))
 		      (elt (encode-coding-string elt coding-system-for-read))
@@ -5206,7 +5320,7 @@ This requires restrictions of file name syntax."
 		  ;; of process output.  So we unset it temporarily.
 		  (setenv "PS1")
 		  (with-temp-buffer
-		    (should (zerop (process-file "env" nil t nil)))
+		    (should (zerop (process-file "printenv" nil t nil)))
 		    (goto-char (point-min))
 		    (should
 		     (re-search-forward
@@ -5385,6 +5499,7 @@ Use the `ls' command."
   (skip-unless (not (tramp--test-rsync-p)))
   (skip-unless (not (tramp--test-windows-nt-and-batch)))
   (skip-unless (not (tramp--test-windows-nt-and-pscp-psftp-p)))
+  (skip-unless (not (tramp--test-ksh-p)))
 
   (tramp--test-utf8))
 
@@ -5398,6 +5513,7 @@ Use the `stat' command."
   (skip-unless (not (tramp--test-rsync-p)))
   (skip-unless (not (tramp--test-windows-nt-and-batch)))
   (skip-unless (not (tramp--test-windows-nt-and-pscp-psftp-p)))
+  (skip-unless (not (tramp--test-ksh-p)))
   (with-parsed-tramp-file-name tramp-test-temporary-file-directory nil
     (skip-unless (tramp-get-remote-stat v)))
 
@@ -5418,6 +5534,7 @@ Use the `perl' command."
   (skip-unless (not (tramp--test-rsync-p)))
   (skip-unless (not (tramp--test-windows-nt-and-batch)))
   (skip-unless (not (tramp--test-windows-nt-and-pscp-psftp-p)))
+  (skip-unless (not (tramp--test-ksh-p)))
   (with-parsed-tramp-file-name tramp-test-temporary-file-directory nil
     (skip-unless (tramp-get-remote-perl v)))
 
@@ -5441,6 +5558,7 @@ Use the `ls' command."
   (skip-unless (not (tramp--test-rsync-p)))
   (skip-unless (not (tramp--test-windows-nt-and-batch)))
   (skip-unless (not (tramp--test-windows-nt-and-pscp-psftp-p)))
+  (skip-unless (not (tramp--test-ksh-p)))
 
   (let ((tramp-connection-properties
 	 (append

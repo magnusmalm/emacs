@@ -1905,7 +1905,14 @@ If INITIAL is non-nil, it specifies the initial input string."
        )
 
     (ido-setup-completion-map)
-    (setq ido-text-init initial)
+
+    (setq ido-text-init
+          (if (consp initial)
+              (cons (car initial)
+                    ;; `completing-read' uses 0-based index while
+                    ;; `read-from-minibuffer' uses 1-based index.
+                    (1+ (cdr initial)))
+            initial))
     (setq ido-input-stack nil)
 
     (run-hooks 'ido-setup-hook)
@@ -3883,7 +3890,7 @@ frame, rather than all frames, regardless of value of `ido-all-frames'."
 
 (defun ido-ignore-item-p (name re-list &optional ignore-ext)
   "Return t if the buffer or file NAME should be ignored."
-  (or (member name ido-ignore-item-temp-list)
+  (or (and (member name ido-ignore-item-temp-list) t)
       (and
        ido-process-ignore-lists re-list
        (save-match-data
@@ -4134,6 +4141,9 @@ Record command in `command-history' if optional RECORD is non-nil."
      ((eq method 'display)
       (display-buffer buffer))
 
+     ((eq method 'display-even-when-displayed)
+      (display-buffer buffer t))
+
      ((eq method 'other-frame)
       (switch-to-buffer-other-frame buffer)
       (select-frame-set-input-focus (selected-frame)))
@@ -4218,12 +4228,20 @@ For details of keybindings, see `ido-switch-buffer'."
   (ido-buffer-internal 'other-window 'switch-to-buffer-other-window))
 
 ;;;###autoload
-(defun ido-display-buffer ()
+(defun ido-display-buffer (&optional action)
   "Display a buffer in another window but don't select it.
+
+If ACTION (the prefix argument interactively), display the buffer
+in another windown even if it's already displayed in the current
+window.
+
 The buffer name is selected interactively by typing a substring.
 For details of keybindings, see `ido-switch-buffer'."
-  (interactive)
-  (ido-buffer-internal 'display 'display-buffer nil nil nil 'ignore))
+  (interactive "P")
+  (ido-buffer-internal (if action
+                           'display-even-when-displayed
+                         'display)
+                       'display-buffer nil nil nil 'ignore))
 
 ;;;###autoload
 (defun ido-display-buffer-other-frame ()
@@ -4311,8 +4329,8 @@ RET\tSelect the file at the front of the list of matches.
 \\[ido-toggle-case]\tToggle case-sensitive searching of file names.
 \\[ido-toggle-literal]\tToggle literal reading of this file.
 \\[ido-completion-help]\tShow list of matching files in separate window.
-\\[ido-toggle-ignore]\tToggle ignoring files listed in `ido-ignore-files'."
-
+\\[ido-toggle-ignore]\tToggle ignoring files listed in `ido-ignore-files'.
+\\[ido-reread-directory]\tReread the current directory."
   (interactive)
   (ido-file-internal ido-default-file-method))
 

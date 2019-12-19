@@ -58,6 +58,15 @@ If nil, use Emacs default."
   :type '(choice (const :tag "Default" nil)
 		 integer))
 
+(defcustom compilation-transform-file-match-alist
+  '(("/bin/[a-z]*sh\\'" nil))
+  "Alist of regexp/replacements to alter file names in compilation errors.
+If the replacement is nil, the file will not be considered an
+error after all.  If not nil, it should be a regexp replacement
+string."
+  :type '(repeat (list regexp string))
+  :version "27.1")
+
 (defvar compilation-filter-hook nil
   "Hook run after `compilation-filter' has inserted a string into the buffer.
 It is called with the variable `compilation-filter-start' bound
@@ -107,9 +116,33 @@ and a string describing how the process finished.")
 
 (defvar compilation-in-progress nil
   "List of compilation processes now running.")
-(or (assq 'compilation-in-progress minor-mode-alist)
-    (setq minor-mode-alist (cons '(compilation-in-progress " Compiling")
-				 minor-mode-alist)))
+(or (assq 'compilation-in-progress mode-line-modes)
+    (add-to-list 'mode-line-modes
+                 (list 'compilation-in-progress
+                       (propertize "[Compiling] "
+	                           'help-echo "Compiling; mouse-2: Goto Buffer"
+                                   'mouse-face 'mode-line-highlight
+                                   'local-map
+                                   (make-mode-line-mouse-map
+                                    'mouse-2
+			            #'compilation-goto-in-progress-buffer)))))
+
+(defun compilation-goto-in-progress-buffer ()
+  "Switch to the compilation buffer."
+  (interactive)
+  (cond
+   ((> (length compilation-in-progress) 1)
+    (switch-to-buffer (completing-read
+                       "Several compilation buffers; switch to: "
+                       (mapcar
+                        (lambda (process)
+                          (buffer-name (process-buffer process)))
+                        compilation-in-progress)
+                       nil t)))
+   (compilation-in-progress
+    (switch-to-buffer (process-buffer (car compilation-in-progress))))
+   (t
+    (error "No ongoing compilations"))))
 
 (defvar compilation-error "error"
   "Stem of message to print when no matches are found.")
@@ -203,6 +236,16 @@ of[ \t]+\"?\\([a-zA-Z]?:?[^\":\n]+\\)\"?:" 3 2 nil (1))
      "\\(^Warning .*\\)? line[ \n]\\([0-9]+\\)[ \n]\\(?:col \\([0-9]+\\)[ \n]\\)?file \\([^ :;\n]+\\)"
      4 2 3 (1))
 
+    ;; Gradle with kotlin-gradle-plugin (see
+    ;; GradleStyleMessagerRenderer.kt in kotlin sources, see
+    ;; https://youtrack.jetbrains.com/issue/KT-34683).
+    (gradle-kotlin
+     ,(concat
+       "^\\(?:\\(w\\)\\|.\\): *"            ;type
+       "\\(\\(?:[A-Za-z]:\\)?[^:\n]+\\): *" ;file
+       "(\\([0-9]+\\), *\\([0-9]+\\))")     ;line, column
+     2 3 4 (1))
+
     (iar
      "^\"\\(.*\\)\",\\([0-9]+\\)\\s-+\\(?:Error\\|Warnin\\(g\\)\\)\\[[0-9]+\\]:"
      1 2 nil (3))
@@ -249,6 +292,12 @@ of[ \t]+\"?\\([a-zA-Z]?:?[^\":\n]+\\)\"?:" 3 2 nil (1))
 
     (ruby-Test::Unit
      "^[\t ]*\\[\\([^(].*\\):\\([1-9][0-9]*\\)\\(\\]\\)?:in " 1 2)
+
+    (gmake
+     ;; Set GNU make error messages as INFO level.
+     ;; It starts with the name of the make program which is variable,
+     ;; so don't try to match it.
+     ": \\*\\*\\* \\[\\(\\(.+?\\):\\([0-9]+\\): .+\\)\\]" 2 3 nil 0 1)
 
     (gnu
      ;; The first line matches the program name for
@@ -303,7 +352,7 @@ of[ \t]+\"?\\([a-zA-Z]?:?[^\":\n]+\\)\"?:" 3 2 nil (1))
           (: (* " ")
              (group-n 7 (| (regexp "[Ii]nfo\\(?:\\>\\|rmationa?l?\\)")
                            "I:"
-                           (: "[ skipping " (+ ".") " ]")
+                           (: "[ skipping " (+ nonl) " ]")
                            "instantiated from"
                            "required from"
                            (regexp "[Nn]ote"))))
@@ -578,7 +627,12 @@ SUBMATCH is the number of a submatch and FACE is an expression
 which evaluates to a face name (a symbol or string).
 Alternatively, FACE can evaluate to a property list of the
 form (face FACE PROP1 VAL1 PROP2 VAL2 ...), in which case all the
-listed text properties PROP# are given values VAL# as well."
+listed text properties PROP# are given values VAL# as well.
+
+After identifying errors and warnings determined by this
+variable, the `compilation-transform-file-match-alist' variable
+is then consulted.  It allows further transformations of the
+matched file names, and weeding out false positives."
   :type '(repeat (choice (symbol :tag "Predefined symbol")
 			 (sexp :tag "Error specification")))
   :link `(file-link :tag "example file"
@@ -1081,7 +1135,7 @@ POS and RES.")
                (setq file (if (functionp file) (funcall file)
                             (match-string-no-properties file))))
 	  (let ((dir
-	    (unless (file-name-absolute-p file)
+	         (unless (file-name-absolute-p file)
                    (let ((pos (compilation--previous-directory
                                (match-beginning 0))))
                      (when pos
@@ -1131,19 +1185,37 @@ POS and RES.")
                      (setq end-col (match-string-no-properties end-col))
                      (- (string-to-number end-col) -1)))
               (and end-line -1)))
-    (if (consp type)			; not a static type, check what it is.
+    (if (consp type)            ; not a static type, check what it is.
 	(setq type (or (and (car type) (match-end (car type)) 1)
 		       (and (cdr type) (match-end (cdr type)) 0)
 		       2)))
+    ;; Remove matches like /bin/sh and do other file name transforms.
+    (save-match-data
+      (let ((file-name
+             (and (consp file)
+                  (not (bufferp (car file)))
+                  (if (cdr file)
+                      (expand-file-name (car file) (cdr file))
+                    (car file)))))
+        (cl-loop for (regexp replacement)
+                 in compilation-transform-file-match-alist
+                 when (string-match regexp file-name)
+                 return (if replacement
+                            (setq file (list (replace-match replacement nil nil
+                                                            file-name)))
+                          (setq file nil)))))
+    (if (not file)
+        ;; If we ignored all the files with errors on this line, then
+        ;; return nil.
+        nil
+      (when (and compilation-auto-jump-to-next
+                 (>= type compilation-skip-threshold))
+        (kill-local-variable 'compilation-auto-jump-to-next)
+        (run-with-timer 0 nil 'compilation-auto-jump
+                        (current-buffer) (match-beginning 0)))
 
-    (when (and compilation-auto-jump-to-next
-               (>= type compilation-skip-threshold))
-      (kill-local-variable 'compilation-auto-jump-to-next)
-      (run-with-timer 0 nil 'compilation-auto-jump
-                      (current-buffer) (match-beginning 0)))
-
-    (compilation-internal-error-properties
-     file line end-line col end-col type fmt)))
+      (compilation-internal-error-properties
+       file line end-line col end-col type fmt))))
 
 (defun compilation-beginning-of-line (&optional n)
   "Like `beginning-of-line', but accounts for lines hidden by `selective-display'."
@@ -1589,6 +1661,11 @@ If nil, ask to kill it."
   :type 'boolean
   :version "24.3")
 
+(defun compilation--update-in-progress-mode-line ()
+  ;; `compilation-in-progress' affects the mode-line of all
+  ;; buffers when it changes from nil to non-nil or vice-versa.
+  (unless compilation-in-progress (force-mode-line-update t)))
+
 ;;;###autoload
 (defun compilation-start (command &optional mode name-function highlight-regexp)
   "Run compilation command COMMAND (low level interface).
@@ -1782,8 +1859,8 @@ Returns the compilation buffer created."
 		  ;; The process may have exited already.
 		  (error nil)))
 	      (run-hook-with-args 'compilation-start-hook proc)
-              (setq compilation-in-progress
-		    (cons proc compilation-in-progress)))
+              (compilation--update-in-progress-mode-line)
+	      (push proc compilation-in-progress))
 	  ;; No asynchronous processes available.
 	  (message "Executing `%s'..." command)
 	  ;; Fake mode line display as if `start-process' were run.
@@ -2216,7 +2293,8 @@ commands of Compilation major mode are available.  See
 	    ;; process is dead, we can delete it now.  Otherwise it
 	    ;; will stay around until M-x list-processes.
 	    (delete-process proc)))
-	(setq compilation-in-progress (delq proc compilation-in-progress)))))
+        (setq compilation-in-progress (delq proc compilation-in-progress))
+        (compilation--update-in-progress-mode-line))))
 
 (defun compilation-filter (proc string)
   "Process filter for compilation buffers.
@@ -2441,6 +2519,8 @@ This is the value of `next-error-function' in Compilation buffers."
 	 (loc (compilation--message->loc msg))
 	 (end-loc (compilation--message->end-loc msg))
 	 (marker (point-marker)))
+    (unless loc
+      (user-error "No next error"))
     (setq compilation-current-error (point-marker)
 	  overlay-arrow-position
 	    (if (bolp)
@@ -2544,28 +2624,98 @@ region and the first line of the next region."
 
 (defcustom compilation-context-lines nil
   "Display this many lines of leading context before the current message.
-If nil and the left fringe is displayed, don't scroll the
+If nil or t, and the left fringe is displayed, don't scroll the
 compilation output window; an arrow in the left fringe points to
-the current message.  If nil and there is no left fringe, the message
-displays at the top of the window; there is no arrow."
-  :type '(choice integer (const :tag "No window scrolling" nil))
+the current message.  With no left fringe, If nil, the message
+scrolls to the top of the window; there is no arrow.  If t, don't
+scroll the compilation output window at all; an arrow before
+column zero points to the current message."
+  :type '(choice integer
+                 (const :tag "Scroll window when no fringe" nil)
+                 (const :tag  "No window scrolling" t))
   :version "22.1")
 
 (defsubst compilation-set-window (w mk)
-  "Align the compilation output window W with marker MK near top."
-  (if (integerp compilation-context-lines)
-      (set-window-start w (save-excursion
-			    (goto-char mk)
-			    (compilation-beginning-of-line
-			     (- 1 compilation-context-lines))
-			    (point)))
+  "Maybe align the compilation output window W with marker MK near top."
+  (cond ((integerp compilation-context-lines)
+         (set-window-start w (save-excursion
+			       (goto-char mk)
+			       (compilation-beginning-of-line
+			        (- 1 compilation-context-lines))
+			       (point))))
+        ((eq compilation-context-lines t))
     ;; If there is no left fringe.
-    (when (equal (car (window-fringes w)) 0)
-      (set-window-start w (save-excursion
-                            (goto-char mk)
-			    (beginning-of-line 1)
-			    (point)))))
-    (set-window-point w mk))
+        ((equal (car (window-fringes w)) 0)
+         (set-window-start w (save-excursion
+                               (goto-char mk)
+			       (beginning-of-line 1)
+			       (point)))
+         (set-window-point w mk))
+        (t (set-window-point w mk))))
+
+(defvar-local compilation-arrow-overlay nil
+  "Overlay with the before-string property of `overlay-arrow-string'.
+
+When non-nil, this overlay causes redisplay to display `overlay-arrow-string'
+at the overlay's start position.")
+
+(defconst compilation--margin-string (propertize "=>" 'face 'default)
+  "The string which will appear in the margin in compilation mode.")
+
+(defconst compilation--dummy-string
+  (propertize ">" 'display
+              `((margin left-margin) ,compilation--margin-string))
+  "A string which is only a placeholder for `compilation--margin-string'.
+Actual value is never used, only the text property.")
+
+(defun compilation-set-up-arrow-spec-in-margin ()
+  "Set up compilation-arrow-overlay to display as an arrow in a margin."
+  (setq overlay-arrow-string "")
+  (setq compilation-arrow-overlay
+	(make-overlay overlay-arrow-position overlay-arrow-position))
+  (overlay-put compilation-arrow-overlay
+               'before-string compilation--dummy-string)
+  (set-window-margins (selected-window) (+ (or (car (window-margins)) 0) 2))
+  ;; Take precautions against `compilation-mode' getting reinitialized.
+  (add-hook 'change-major-mode-hook
+            'compilation-tear-down-arrow-spec-in-margin nil t))
+
+(defun compilation-tear-down-arrow-spec-in-margin ()
+  "Restore compilation-arrow-overlay to not using the margin, which is removed."
+  (when (overlayp compilation-arrow-overlay)
+    (overlay-put compilation-arrow-overlay 'before-string nil)
+    (delete-overlay compilation-arrow-overlay)
+    (setq compilation-arrow-overlay nil)
+    (set-window-margins (selected-window) (- (car (window-margins)) 2))))
+
+(defun compilation-set-overlay-arrow (w)
+  "Set up, or switch off, the overlay-arrow for window W."
+  (with-selected-window w        ; So the later `goto-char' will work.
+    (if (and (eq compilation-context-lines t)
+             (equal (car (window-fringes w)) 0)) ; No left fringe
+        ;; Insert a before-string overlay at the beginning of the line
+        ;; pointed to by `overlay-arrow-position', such that it will
+        ;; display in a 2-character margin.
+        (progn
+          (cond
+           ((overlayp compilation-arrow-overlay)
+            (when (not (eq (overlay-start compilation-arrow-overlay)
+		           overlay-arrow-position))
+	      (if overlay-arrow-position
+	          (move-overlay compilation-arrow-overlay
+			        overlay-arrow-position overlay-arrow-position)
+                (compilation-tear-down-arrow-spec-in-margin))))
+
+           (overlay-arrow-position
+            (compilation-set-up-arrow-spec-in-margin)))
+          ;; Ensure that the "=>" remains in the window by causing
+          ;; the window to be scrolled, if needed.
+          (goto-char (overlay-start compilation-arrow-overlay)))
+
+      ;; `compilation-context-lines' isn't t, or we've got a left
+      ;; fringe, so remove any overlay arrow.
+      (when (overlayp compilation-arrow-overlay)
+        (compilation-tear-down-arrow-spec-in-margin)))))
 
 (defvar next-error-highlight-timer)
 
@@ -2587,7 +2737,8 @@ and overlay is highlighted between MK and END-MK."
 	 (highlight-regexp (with-current-buffer (marker-buffer msg)
 			     ;; also do this while we change buffer
 			     (goto-char (marker-position msg))
-			     (and w (compilation-set-window w msg))
+			     (and w (progn (compilation-set-window w msg)
+                                           (compilation-set-overlay-arrow w)))
 			     compilation-highlight-regexp)))
     ;; Ideally, the window-size should be passed to `display-buffer'
     ;; so it's only used when creating a new window.
@@ -2683,7 +2834,8 @@ attempts to find a file whose name is produced by (format FMT FILENAME)."
                       (expand-file-name directory)
                     default-directory))
         buffer thisdir fmts name)
-    (if (file-name-absolute-p filename)
+    (if (and filename
+             (file-name-absolute-p filename))
         ;; The file name is absolute.  Use its explicit directory as
         ;; the first in the search path, and strip it from FILENAME.
         (setq filename (abbreviate-file-name (expand-file-name filename))
@@ -2708,10 +2860,14 @@ attempts to find a file whose name is produced by (format FMT FILENAME)."
 				   '(nil (allow-no-window . t))))))
           (with-current-buffer (marker-buffer marker)
 	    (goto-char marker)
-	    (and w (compilation-set-window w marker)))
+	    (and w (progn (compilation-set-window w marker)
+                          (compilation-set-overlay-arrow w))))
           (let* ((name (read-file-name
-                        (format "Find this %s in (default %s): "
-                                compilation-error filename)
+                        (format "Find this %s in%s: "
+                                compilation-error
+                                (if filename
+                                    (format " (default %s)" filename)
+                                  ""))
                         spec-dir filename t nil
                         ;; The predicate below is fine when called from
                         ;; minibuffer-complete-and-exit, but it's too

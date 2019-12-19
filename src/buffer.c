@@ -105,7 +105,7 @@ static char buffer_permanent_local_flags[MAX_PER_BUFFER_VARS];
 
 /* Number of per-buffer variables used.  */
 
-int last_per_buffer_idx;
+static int last_per_buffer_idx;
 
 static void call_overlay_mod_hooks (Lisp_Object list, Lisp_Object overlay,
                                     bool after, Lisp_Object arg1,
@@ -312,6 +312,11 @@ bset_header_line_format (struct buffer *b, Lisp_Object val)
   b->header_line_format_ = val;
 }
 static void
+bset_tab_line_format (struct buffer *b, Lisp_Object val)
+{
+  b->tab_line_format_ = val;
+}
+static void
 bset_indicate_buffer_boundaries (struct buffer *b, Lisp_Object val)
 {
   b->indicate_buffer_boundaries_ = val;
@@ -441,7 +446,7 @@ nsberror (Lisp_Object spec)
 }
 
 DEFUN ("buffer-live-p", Fbuffer_live_p, Sbuffer_live_p, 1, 1, 0,
-       doc: /* Return non-nil if OBJECT is a buffer which has not been killed.
+       doc: /* Return t if OBJECT is a buffer which has not been killed.
 Value is nil if OBJECT is not a buffer or if it has been killed.  */)
   (Lisp_Object object)
 {
@@ -716,6 +721,12 @@ static void
 set_buffer_overlays_after (struct buffer *b, struct Lisp_Overlay *o)
 {
   b->overlays_after = o;
+}
+
+bool
+valid_per_buffer_idx (int idx)
+{
+  return 0 <= idx && idx < last_per_buffer_idx;
 }
 
 /* Clone per-buffer values of buffer FROM.
@@ -1386,7 +1397,7 @@ No argument or nil as argument means use current buffer as BUFFER.  */)
 DEFUN ("force-mode-line-update", Fforce_mode_line_update,
        Sforce_mode_line_update, 0, 1, 0,
        doc: /* Force redisplay of the current buffer's mode line and header line.
-With optional non-nil ALL, force redisplay of all mode lines and
+With optional non-nil ALL, force redisplay of all mode lines, tab lines and
 header lines.  This function also forces recomputation of the
 menu bar menus and the frame title.  */)
      (Lisp_Object all)
@@ -4631,7 +4642,7 @@ report_overlay_modification (Lisp_Object start, Lisp_Object end, bool after,
 	prop_i = copy[i++];
 	overlay_i = copy[i++];
 	/* It is possible that the recorded overlay has been deleted
-	   (which makes it's markers' buffers be nil), or that (due to
+	   (which makes its markers' buffers be nil), or that (due to
 	   some bug) it belongs to a different buffer.  Only run this
 	   hook if the overlay belongs to the current buffer.  */
 	if (XMARKER (OVERLAY_START (overlay_i))->buffer == current_buffer)
@@ -5269,6 +5280,7 @@ init_buffer_once (void)
   XSETFASTINT (BVAR (&buffer_local_flags, scroll_up_aggressively), idx); ++idx;
   XSETFASTINT (BVAR (&buffer_local_flags, scroll_down_aggressively), idx); ++idx;
   XSETFASTINT (BVAR (&buffer_local_flags, header_line_format), idx); ++idx;
+  XSETFASTINT (BVAR (&buffer_local_flags, tab_line_format), idx); ++idx;
   XSETFASTINT (BVAR (&buffer_local_flags, cursor_type), idx); ++idx;
   XSETFASTINT (BVAR (&buffer_local_flags, extra_line_spacing), idx); ++idx;
   XSETFASTINT (BVAR (&buffer_local_flags, cursor_in_non_selected_windows), idx); ++idx;
@@ -5332,6 +5344,7 @@ init_buffer_once (void)
 
   bset_mode_line_format (&buffer_defaults, build_pure_c_string ("%-"));
   bset_header_line_format (&buffer_defaults, Qnil);
+  bset_tab_line_format (&buffer_defaults, Qnil);
   bset_abbrev_mode (&buffer_defaults, Qnil);
   bset_overwrite_mode (&buffer_defaults, Qnil);
   bset_case_fold_search (&buffer_defaults, Qt);
@@ -5648,6 +5661,13 @@ during the next redisplay. */);
   Fput (Qprotected_field, Qerror_message,
 	build_pure_c_string ("Attempt to modify a protected field"));
 
+  DEFVAR_PER_BUFFER ("tab-line-format",
+		     &BVAR (current_buffer, tab_line_format),
+		     Qnil,
+		     doc: /* Analogous to `mode-line-format', but controls the tab line.
+The tab line appears, optionally, at the top of a window;
+the mode line appears at the bottom.  */);
+
   DEFVAR_PER_BUFFER ("header-line-format",
 		     &BVAR (current_buffer, header_line_format),
 		     Qnil,
@@ -5803,7 +5823,11 @@ This variable is never applied to a way of decoding a file while reading it.  */
 
   DEFVAR_PER_BUFFER ("bidi-display-reordering",
 		     &BVAR (current_buffer, bidi_display_reordering), Qnil,
-		     doc: /* Non-nil means reorder bidirectional text for display in the visual order.  */);
+		     doc: /* Non-nil means reorder bidirectional text for display in the visual order.
+Setting this to nil is intended for use in debugging the display code.
+Don't set to nil in normal sessions, as that is not supported.
+See also `bidi-paragraph-direction'; setting that non-nil might
+speed up redisplay.  */);
 
   DEFVAR_PER_BUFFER ("bidi-paragraph-start-re",
 		     &BVAR (current_buffer, bidi_paragraph_start_re), Qnil,

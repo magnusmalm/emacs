@@ -267,6 +267,25 @@ Compare the following example with the example above for @code{let}.
 @end example
 @end defspec
 
+@defspec letrec (bindings@dots{}) forms@dots{}
+This special form is like @code{let*}, but all the variables are bound
+before any of the local values are computed.  The values are then
+assigned to the locally bound variables.  This is only useful when
+lexical binding is in effect, and you want to create closures that
+refer to bindings that would otherwise not yet be in effect when using
+@code{let*}.
+
+For instance, here's a closure that removes itself from a hook after
+being run once:
+
+@lisp
+(letrec ((hookfun (lambda ()
+                    (message "Run once")
+                    (remove-hook 'post-command-hook hookfun))))
+  (add-hook 'post-command-hook hookfun))
+@end lisp
+@end defspec
+
   Here is a complete list of the other facilities that create local
 bindings:
 
@@ -303,7 +322,7 @@ that Lisp avoids infinite recursion on an ill-defined function.
 @code{max-lisp-eval-depth} provides another limit on depth of nesting.
 @xref{Definition of max-lisp-eval-depth,, Eval}.
 
-The default value is 1500.  Entry to the Lisp debugger increases the
+The default value is 1600.  Entry to the Lisp debugger increases the
 value, if there is little room left, to make sure the debugger itself
 has room to execute.
 @end defopt
@@ -1411,11 +1430,17 @@ needed if you use the @var{local} argument to @code{add-hook} or
 @code{remove-hook}.
 @end deffn
 
-@defmac setq-local variable value
-This macro creates a buffer-local binding in the current buffer for
-@var{variable}, and gives it the buffer-local value @var{value}.  It
-is equivalent to calling @code{make-local-variable} followed by
-@code{setq}.  @var{variable} should be an unquoted symbol.
+@defmac setq-local &rest pairs
+@var{pairs} is a list of variable and value pairs.  This macro creates
+a buffer-local binding in the current buffer for each of the
+variables, and gives them a buffer-local value.  It is equivalent to
+calling @code{make-local-variable} followed by @code{setq} for each of
+the variables.  The variables should be unquoted symbols.
+
+@lisp
+(setq-local var1 "value1"
+            var2 "value2")
+@end lisp
 @end defmac
 
 @deffn Command make-variable-buffer-local variable
@@ -1978,7 +2003,7 @@ files, Emacs uses the settings from the deepest file it finds starting
 from the file's directory and moving up the directory tree.  This
 constant is also used to derive the name of a second dir-locals file
 @file{.dir-locals-2.el}.  If this second dir-locals file is present,
-then that is loaded instead of @file{.dir-locals.el}.  This is useful
+then that is loaded in addition to @file{.dir-locals.el}.  This is useful
 when @file{.dir-locals.el} is under version control in a shared
 repository and cannot be used for personal customizations.  The file
 specifies local variables as a specially formatted list; see
@@ -2533,14 +2558,43 @@ set.  An example of using this macro is:
 @end example
 @end defmac
 
-@findex gv-define-expander
-@findex gv-letplace
-@c FIXME?  Not sure what or how much to say about these.
-@c See cl.texi for an example of using gv-letplace.
-For more control over the expansion, see the macro @code{gv-define-expander}.
+@defmac gv-define-expander name handler
+For more control over the expansion, the @code{gv-define-expander}
+macro can be used.  For instance, a settable @code{substring} could be
+implemented this way:
+
+@example
+(gv-define-expander substring
+  (lambda (do place from &optional to)
+    (gv-letplace (getter setter) place
+      (macroexp-let2* nil ((start from) (end to))
+        (funcall do `(substring ,getter ,start ,end)
+                 (lambda (v)
+                   (funcall setter `(cl--set-substring
+                                     ,getter ,start ,end ,v))))))))
+@end example
+@end defmac
+
+@defmac gv-letplace (getter setter) place &rest body
 The macro @code{gv-letplace} can be useful in defining macros that
 perform similarly to @code{setf}; for example, the @code{incf} macro
-of Common Lisp.  Consult the source file @file{gv.el} for more details.
+of Common Lisp could be implemented this way:
+
+@example
+(defmacro incf (place &optional n)
+  (gv-letplace (getter setter) place
+    (macroexp-let2 nil v (or n 1)
+      (funcall setter `(+ ,v ,getter)))))
+@end example
+
+@var{getter} will be bound to a copyable expression that returns the
+value of @var{place}.  @var{setter} will be bound to a function that
+takes an expression @var{v} and returns a new expression that sets
+@var{place} to @var{v}.  @var{body} should return a Emacs Lisp
+expression manipulating @var{place} via @var{getter} and @var{setter}.
+@end defmac
+
+Consult the source file @file{gv.el} for more details.
 
 @cindex CL note---no @code{setf} functions
 @quotation

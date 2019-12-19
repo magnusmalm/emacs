@@ -695,8 +695,11 @@ its argument list allows full Common Lisp conventions."
   "Bind the variables in ARGS to the result of EXPR and execute BODY."
   (declare (indent 2)
            (debug (&define cl-macro-list1 def-form cl-declarations def-body)))
-  (let* ((cl--bind-lets nil) (cl--bind-forms nil)
-	 (cl--bind-defs nil) (cl--bind-block 'cl-none) (cl--bind-enquote nil))
+  (let* ((cl--bind-lets nil)
+         (cl--bind-forms nil)
+	 (cl--bind-defs nil)
+         (cl--bind-block args)
+         (cl--bind-enquote nil))
     (cl--do-arglist (or args '(&aux)) expr)
     (macroexp-let* (nreverse cl--bind-lets)
                    (macroexp-progn (append (nreverse cl--bind-forms) body)))))
@@ -2044,7 +2047,9 @@ recursive function definitions.  Use `cl-labels' for that.  See
 info node `(cl) Function Bindings' for details.
 
 \(fn ((FUNC ARGLIST BODY...) ...) FORM...)"
-  (declare (indent 1) (debug ((&rest (cl-defun)) cl-declarations body)))
+  (declare (indent 1)
+           (debug ((&rest [&or (&define name function-form) (cl-defun)])
+                   cl-declarations body)))
   (let ((binds ()) (newenv macroexpand-all-environment))
     (dolist (binding bindings)
       (let ((var (make-symbol (format "--cl-%s--" (car binding))))
@@ -2574,6 +2579,8 @@ values.  Note that this macro is *not* available in Common Lisp.
 As a special case, if `(PLACE)' is used instead of `(PLACE VALUE)',
 the PLACE is not modified before executing BODY.
 
+See info node `(cl) Function Bindings' for details.
+
 \(fn ((PLACE VALUE) ...) BODY...)"
   (declare (indent 1) (debug ((&rest [&or (symbolp form)
                                           (gate gv-place &optional form)])
@@ -2719,8 +2726,10 @@ node `(cl)Structures' for the description of the options.
 Each SLOT may instead take the form (SNAME SDEFAULT SOPTIONS...), where
 SDEFAULT is the default value of that slot and SOPTIONS are keyword-value
 pairs for that slot.
-Currently, only one keyword is supported, `:read-only'.  If this has a
-non-nil value, that slot cannot be set via `setf'.
+Supported keywords for slots are:
+- `:read-only':  If this has a non-nil value, that slot cannot be set via `setf'.
+- `:documentation': this is a docstring describing the slot.
+- `:type': the type of the field; currently unused.
 
 \(fn NAME &optional DOCSTRING &rest SLOTS)"
   (declare (doc-string 2) (indent 1)
@@ -2899,22 +2908,28 @@ non-nil value, that slot cannot be set via `setf'.
 			 defaults))
 	    (if (assq slot descp)
 		(error "Duplicate slots named %s in %s" slot name))
-	    (let ((accessor (intern (format "%s%s" conc-name slot))))
+	    (let ((accessor (intern (format "%s%s" conc-name slot)))
+                  (default-value (pop desc))
+                  (doc (plist-get desc :documentation))
+                  (access-body
+                   `(progn
+                      ,@(and pred-check
+			     (list `(or ,pred-check
+                                        (signal 'wrong-type-argument
+                                                (list ',name cl-x)))))
+                      ,(if (memq type '(nil vector)) `(aref cl-x ,pos)
+                         (if (= pos 0) '(car cl-x)
+                           `(nth ,pos cl-x))))))
 	      (push slot slots)
-	      (push (pop desc) defaults)
+	      (push default-value defaults)
 	      ;; The arg "cl-x" is referenced by name in eg pred-form
 	      ;; and pred-check, so changing it is not straightforward.
 	      (push `(,defsym ,accessor (cl-x)
-                       ,(format "Access slot \"%s\" of `%s' struct CL-X."
-                                slot name)
+                       ,(format "Access slot \"%s\" of `%s' struct CL-X.%s"
+                                slot name
+                                (if doc (concat "\n" doc) ""))
                        (declare (side-effect-free t))
-                       ,@(and pred-check
-			      (list `(or ,pred-check
-                                         (signal 'wrong-type-argument
-                                                 (list ',name cl-x)))))
-                       ,(if (memq type '(nil vector)) `(aref cl-x ,pos)
-                          (if (= pos 0) '(car cl-x)
-                            `(nth ,pos cl-x))))
+                       ,access-body)
                     forms)
               (when (cl-oddp (length desc))
                 (push
@@ -2934,11 +2949,18 @@ non-nil value, that slot cannot be set via `setf'.
                      forms)
                     (push kw desc)
                     (setcar defaults nil))))
-              (if (plist-get desc ':read-only)
-                  (push `(gv-define-expander ,accessor
-                           (lambda (_cl-do _cl-x)
-                             (error "%s is a read-only slot" ',accessor)))
-                        forms)
+              (cond
+               ((eq defsym 'defun)
+                (unless (plist-get desc ':read-only)
+                  (push `(defun ,(gv-setter accessor) (val cl-x)
+                           (setf ,access-body val))
+                        forms)))
+               ((plist-get desc ':read-only)
+                (push `(gv-define-expander ,accessor
+                         (lambda (_cl-do _cl-x)
+                           (error "%s is a read-only slot" ',accessor)))
+                      forms))
+               (t
                 ;; For normal slots, we don't need to define a setf-expander,
                 ;; since gv-get can use the compiler macro to get the
                 ;; same result.
@@ -2956,7 +2978,7 @@ non-nil value, that slot cannot be set via `setf'.
                 ;;             ,(and pred-check `',pred-check)
                 ;;             ,pos)))
                 ;;       forms)
-                )
+                ))
 	      (if print-auto
 		  (nconc print-func
 			 (list `(princ ,(format " %s" slot) cl-s)
@@ -2998,6 +3020,7 @@ non-nil value, that slot cannot be set via `setf'.
     `(progn
        (defvar ,tag-symbol)
        ,@(nreverse forms)
+       :autoload-end
        ;; Call cl-struct-define during compilation as well, so that
        ;; a subsequent cl-defstruct in the same file can correctly include this
        ;; struct as a parent.

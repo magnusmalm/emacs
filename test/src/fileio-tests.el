@@ -131,4 +131,28 @@ Also check that an encoding error can appear in a symlink."
 (ert-deftest fileio-tests--relative-default-directory ()
   "Test expand-file-name when default-directory is relative."
   (let ((default-directory "some/relative/name"))
-    (should (file-name-absolute-p (expand-file-name "foo")))))
+    (should (file-name-absolute-p (expand-file-name "foo"))))
+  (let* ((default-directory "~foo")
+         (name (expand-file-name "bar")))
+    (should (and (file-name-absolute-p name)
+                 (not (eq (aref name 0) ?~))))))
+
+(ert-deftest fileio-tests--file-name-absolute-p ()
+  "Test file-name-absolute-p."
+  (dolist (suffix '("" "/" "//" "/foo" "/foo/" "/foo//" "/foo/bar"))
+    (unless (string-equal suffix "")
+      (should (file-name-absolute-p suffix)))
+    (should (file-name-absolute-p (concat "~" suffix)))
+    (when (user-full-name user-login-name)
+      (should (file-name-absolute-p (concat "~" user-login-name suffix))))
+    (unless (user-full-name "nosuchuser")
+      (should (not (file-name-absolute-p (concat "~nosuchuser" suffix)))))))
+
+(ert-deftest fileio-tests--circular-after-insert-file-functions ()
+  "Test after-insert-file-functions as a circular list."
+  (let ((f (make-temp-file "fileio"))
+        (after-insert-file-functions (list 'identity)))
+    (setcdr after-insert-file-functions after-insert-file-functions)
+    (write-region "hello\n" nil f nil 'silent)
+    (should-error (insert-file-contents f) :type 'circular-list)
+    (delete-file f)))

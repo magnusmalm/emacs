@@ -1216,9 +1216,7 @@ the stroke as a character in some language."
 
 ;;(defun strokes-edit-quit ()
 ;;  (interactive)
-;;  (or (one-window-p t 0)
-;;      (delete-window))
-;;  (kill-buffer "*Strokes List*"))
+;;  (quit-windows-on "*Strokes List*" t))
 
 ;;(define-derived-mode edit-strokes-mode list-mode
 ;;  "Edit-Strokes"
@@ -1523,12 +1521,6 @@ Encode/decode your strokes with \\[strokes-encode-buffer],
   "Non-nil if CHAR represents an `on' or `off' bit in the XPM."
   (or (eq char ?\s)
       (eq char ?*)))
-
-;;(defsubst strokes-xor (a b)  ### Should I make this an inline function? ###
-;;  "T if one and only one of A and B is non-nil; otherwise, returns nil.
-;;NOTE: Don't use this as a numeric xor since it treats all non-nil
-;;      values as t including `0' (zero)."
-;;  (eq (null a) (not (null b))))
 
 (defsubst strokes-xpm-encode-length-as-string (length)
   "Given some LENGTH in [0,62) do a fast lookup of its encoding."

@@ -36,11 +36,9 @@ saturated_add (EMACS_INT a, EMACS_INT b)
 
 typedef struct Lisp_Hash_Table log_t;
 
-static bool cmpfn_profiler (
-  struct hash_table_test *, Lisp_Object, Lisp_Object);
-
-static EMACS_UINT hashfn_profiler (
-  struct hash_table_test *, Lisp_Object);
+static Lisp_Object cmpfn_profiler (Lisp_Object, Lisp_Object,
+				   struct Lisp_Hash_Table *);
+static Lisp_Object hashfn_profiler (Lisp_Object, struct Lisp_Hash_Table *);
 
 static const struct hash_table_test hashtest_profiler =
   {
@@ -68,11 +66,11 @@ make_log (void)
 				     Qnil, false);
   struct Lisp_Hash_Table *h = XHASH_TABLE (log);
 
-  /* What is special about our hash-tables is that the keys are pre-filled
-     with the vectors we'll put in them.  */
+  /* What is special about our hash-tables is that the values are pre-filled
+     with the vectors we'll use as keys.  */
   ptrdiff_t i = ASIZE (h->key_and_value) >> 1;
   while (i > 0)
-    set_hash_key_slot (h, --i, make_nil_vector (max_stack_depth));
+    set_hash_value_slot (h, --i, make_nil_vector (max_stack_depth));
   return log;
 }
 
@@ -134,13 +132,14 @@ static void evict_lower_half (log_t *log)
 	  XSET_HASH_TABLE (tmp, log); /* FIXME: Use make_lisp_ptr.  */
 	  Fremhash (key, tmp);
 	}
+        eassert (EQ (Qunbound, HASH_KEY (log, i)));
 	eassert (log->next_free == i);
 
 	eassert (VECTORP (key));
 	for (ptrdiff_t j = 0; j < ASIZE (key); j++)
 	  ASET (key, j, Qnil);
 
-	set_hash_key_slot (log, i, key);
+	set_hash_value_slot (log, i, key);
       }
 }
 
@@ -158,14 +157,15 @@ record_backtrace (log_t *log, EMACS_INT count)
   ptrdiff_t index = log->next_free;
 
   /* Get a "working memory" vector.  */
-  Lisp_Object backtrace = HASH_KEY (log, index);
+  Lisp_Object backtrace = HASH_VALUE (log, index);
+  eassert (EQ (Qunbound, HASH_KEY (log, index)));
   get_backtrace (backtrace);
 
   { /* We basically do a `gethash+puthash' here, except that we have to be
        careful to avoid memory allocation since we're in a signal
        handler, and we optimize the code to try and avoid computing the
        hash+lookup twice.  See fns.c:Fputhash for reference.  */
-    EMACS_UINT hash;
+    Lisp_Object hash;
     ptrdiff_t j = hash_lookup (log, backtrace, &hash);
     if (j >= 0)
       {
@@ -529,30 +529,32 @@ the same lambda expression, or are really unrelated function.  */)
   return res ? Qt : Qnil;
 }
 
-static bool
-cmpfn_profiler (struct hash_table_test *t,
-		Lisp_Object bt1, Lisp_Object bt2)
+static Lisp_Object
+cmpfn_profiler (Lisp_Object bt1, Lisp_Object bt2, struct Lisp_Hash_Table *h)
 {
-  if (VECTORP (bt1) && VECTORP (bt2))
+  if (EQ (bt1, bt2))
+    return Qt;
+  else if (VECTORP (bt1) && VECTORP (bt2))
     {
       ptrdiff_t l = ASIZE (bt1);
       if (l != ASIZE (bt2))
-	return false;
+	return Qnil;
       for (ptrdiff_t i = 0; i < l; i++)
 	if (NILP (Ffunction_equal (AREF (bt1, i), AREF (bt2, i))))
-	  return false;
-      return true;
+	  return Qnil;
+      return Qt;
     }
   else
-    return EQ (bt1, bt2);
+    return Qnil;
 }
 
-static EMACS_UINT
-hashfn_profiler (struct hash_table_test *ht, Lisp_Object bt)
+static Lisp_Object
+hashfn_profiler (Lisp_Object bt, struct Lisp_Hash_Table *h)
 {
+  EMACS_UINT hash;
   if (VECTORP (bt))
     {
-      EMACS_UINT hash = 0;
+      hash = 0;
       ptrdiff_t l = ASIZE (bt);
       for (ptrdiff_t i = 0; i < l; i++)
 	{
@@ -563,10 +565,10 @@ hashfn_profiler (struct hash_table_test *ht, Lisp_Object bt)
 	       ? XHASH (XCDR (XCDR (f))) : XHASH (f));
 	  hash = sxhash_combine (hash, hash1);
 	}
-      return SXHASH_REDUCE (hash);
     }
   else
-    return XHASH (bt);
+    hash = XHASH (bt);
+  return make_ufixnum (SXHASH_REDUCE (hash));
 }
 
 static void syms_of_profiler_for_pdumper (void);

@@ -50,7 +50,7 @@
   "Read a click and release event from XTerm.
 Similar to `xterm-mouse-translate', but using the \"1006\"
 extension, which supports coordinates >= 231 (see
-http://invisible-island.net/xterm/ctlseqs/ctlseqs.html)."
+https://invisible-island.net/xterm/ctlseqs/ctlseqs.html)."
   (xterm-mouse-translate-1 1006))
 
 (defun xterm-mouse-translate-1 (&optional extension)
@@ -245,15 +245,21 @@ which is the \"1006\" extension implemented in Xterm >= 277."
              ;; for default value of mouse-1-click-follows-link (450msec).
 	     (timestamp (if (not xt-mouse-epoch)
 			    (progn (setq xt-mouse-epoch (float-time)) 0)
-			  (car (encode-time (time-since xt-mouse-epoch)
-					    1000))))
+			  (car (time-convert (time-since xt-mouse-epoch)
+					     1000))))
              (w (window-at x y))
              (ltrb (window-edges w))
              (left (nth 0 ltrb))
              (top (nth 1 ltrb))
              (posn (if w
 		       (posn-at-x-y (- x left) (- y top) w t)
-		     (append (list nil 'menu-bar)
+		     (append (list nil (if (and tab-bar-mode
+                                                (or (not menu-bar-mode)
+                                                    ;; The tab-bar is on the
+                                                    ;; second row below menu-bar
+                                                    (eq y 1)))
+                                           'tab-bar
+                                         'menu-bar))
                              (nthcdr 2 (posn-at-x-y x y)))))
              (event (list type posn)))
         (setcar (nthcdr 3 posn) timestamp)

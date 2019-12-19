@@ -112,8 +112,6 @@
 
 (defgroup ffap nil
   "Find file or URL at point."
-  ;; Dead 2009/07/05.
-;;  :link '(url-link :tag "URL" "ftp://ftp.mathcs.emory.edu/pub/mic/emacs/")
   :group 'matching
   :group 'convenience)
 
@@ -409,8 +407,7 @@ See `mail-extr.el' for the known domains."
 (defun ffap-what-domain (domain)
   ;; Like what-domain in mail-extr.el, returns string or nil.
   (require 'mail-extr)
-  (let ((ob (or (ffap-symbol-value 'mail-extr-all-top-level-domains)
-		(ffap-symbol-value 'all-top-level-domains)))) ; XEmacs
+  (let ((ob (ffap-symbol-value 'mail-extr-all-top-level-domains)))
     (and ob (get (intern-soft (downcase domain) ob) 'domain-name))))
 
 (defun ffap-machine-p (host &optional service quiet strategy)
@@ -950,7 +947,7 @@ appending SUFFIX.")
 
 (defun ffap-latex-mode (name)
   "`ffap' function suitable for latex buffers.
-This uses the program kpsewhich if available. In this case, the
+This uses the program kpsewhich if available.  In this case, the
 variable `ffap-latex-guess-rules' is used for building a filename
 out of NAME."
   (cond ((file-exists-p name)
@@ -1081,9 +1078,9 @@ If a given RFC isn't in these then `ffap-rfc-path' is offered."
   '(
     ;; The default, used when the `major-mode' is not found.
     ;; Slightly controversial decisions:
-    ;; * strip trailing "@" and ":"
+    ;; * strip trailing "@", ":" and enclosing "{"/"}".
     ;; * no commas (good for latex)
-    (file "--:\\\\${}+<>@-Z_[:alpha:]~*?" "<@" "@>;.,!:")
+    (file "--:\\\\${}+<>@-Z_[:alpha:]~*?" "{<@" "@>;.,!:}")
     ;; An url, or maybe an email/news message-id:
     (url "--:=&?$+@-Z_[:alpha:]~#,%;*()!'" "^[0-9a-zA-Z]" ":;.,!?")
     ;; Find a string that does *not* contain a colon:
@@ -1513,7 +1510,7 @@ Uses the face `ffap' if it is defined, or else `highlight'."
       (ffap-file-at-point)		; may yield url!
       (ffap-fixup-machine (ffap-machine-at-point))))
 
-(defun ffap-prompter (&optional guess)
+(defun ffap-prompter (&optional guess suffix)
   ;; Does guess and prompt step for find-file-at-point.
   ;; Extra complication for the temporary highlighting.
   (unwind-protect
@@ -1521,7 +1518,9 @@ Uses the face `ffap' if it is defined, or else `highlight'."
       ;; and then maybe skip over this prompt (ff-paths, for example).
       (catch 'ffap-prompter
 	(ffap-read-file-or-url
-	 (if ffap-url-regexp "Find file or URL: " "Find file: ")
+	 (if ffap-url-regexp
+             (format "Find file or URL%s: " (or suffix ""))
+           (format "Find file%s: " (or suffix "")))
 	 (prog1
              (let ((mark-active nil))
                ;; Don't use the region here, since it can be something
@@ -1768,18 +1767,18 @@ Return value:
 ;; at least two new user variables, and there is no w3-fetch-noselect.
 ;; So instead, we just fake it with a slow save-window-excursion.
 
-(defun ffap-other-window ()
+(defun ffap-other-window (filename)
   "Like `ffap', but put buffer in another window.
 Only intended for interactive use."
-  (interactive)
-  (pcase (save-window-excursion (call-interactively 'ffap))
+  (interactive (list (ffap-prompter nil " other window")))
+  (pcase (save-window-excursion (find-file-at-point filename))
     ((or (and (pred bufferp) b) `(,(and (pred bufferp) b) . ,_))
      (switch-to-buffer-other-window b))))
 
-(defun ffap-other-frame ()
+(defun ffap-other-frame (filename)
   "Like `ffap', but put buffer in another frame.
 Only intended for interactive use."
-  (interactive)
+  (interactive (list (ffap-prompter nil " other frame")))
   ;; Extra code works around dedicated windows (noted by JENS, 7/96):
   (let* ((win (selected-window))
 	 (wdp (window-dedicated-p win))
@@ -1789,7 +1788,7 @@ Only intended for interactive use."
 	  (set-window-dedicated-p win nil)
 	  (switch-to-buffer-other-frame
 	   (save-window-excursion
-	     (setq value (call-interactively 'ffap))
+	     (setq value (find-file-at-point filename))
 	     (unless (or (bufferp value) (bufferp (car-safe value)))
 	       (setq value (current-buffer)))
 	     (current-buffer))))
@@ -1803,52 +1802,52 @@ Only intended for interactive use."
     (with-current-buffer buffer
       (read-only-mode 1))))
 
-(defun ffap-read-only ()
+(defun ffap-read-only (filename)
   "Like `ffap', but mark buffer as read-only.
 Only intended for interactive use."
-  (interactive)
-  (let ((value (call-interactively 'ffap)))
+  (interactive (list (ffap-prompter nil " read only")))
+  (let ((value (find-file-at-point filename)))
     (unless (or (bufferp value) (bufferp (car-safe value)))
       (setq value (current-buffer)))
     (ffap--toggle-read-only value)
     value))
 
-(defun ffap-read-only-other-window ()
+(defun ffap-read-only-other-window (filename)
   "Like `ffap', but put buffer in another window and mark as read-only.
 Only intended for interactive use."
-  (interactive)
-  (let ((value (ffap-other-window)))
+  (interactive (list (ffap-prompter nil " read only other window")))
+  (let ((value (ffap-other-window filename)))
     (ffap--toggle-read-only value)
     value))
 
-(defun ffap-read-only-other-frame ()
+(defun ffap-read-only-other-frame (filename)
   "Like `ffap', but put buffer in another frame and mark as read-only.
 Only intended for interactive use."
-  (interactive)
-  (let ((value (ffap-other-frame)))
+  (interactive (list (ffap-prompter nil " read only other frame")))
+  (let ((value (ffap-other-frame filename)))
     (ffap--toggle-read-only value)
     value))
 
-(defun ffap-alternate-file ()
+(defun ffap-alternate-file (filename)
   "Like `ffap' and `find-alternate-file'.
 Only intended for interactive use."
-  (interactive)
+  (interactive (list (ffap-prompter nil " alternate file")))
   (let ((ffap-file-finder 'find-alternate-file))
-    (call-interactively 'ffap)))
+    (find-file-at-point filename)))
 
-(defun ffap-alternate-file-other-window ()
+(defun ffap-alternate-file-other-window (filename)
   "Like `ffap' and `find-alternate-file-other-window'.
 Only intended for interactive use."
-  (interactive)
+  (interactive (list (ffap-prompter nil " alternate file other window")))
   (let ((ffap-file-finder 'find-alternate-file-other-window))
-    (call-interactively 'ffap)))
+    (find-file-at-point filename)))
 
-(defun ffap-literally ()
+(defun ffap-literally (filename)
   "Like `ffap' and command `find-file-literally'.
 Only intended for interactive use."
-  (interactive)
+  (interactive (list (ffap-prompter nil " literally")))
   (let ((ffap-file-finder 'find-file-literally))
-    (call-interactively 'ffap)))
+    (find-file-at-point filename)))
 
 (defalias 'find-file-literally-at-point 'ffap-literally)
 

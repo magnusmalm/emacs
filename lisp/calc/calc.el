@@ -1394,7 +1394,7 @@ commands given here will actually operate on the *Calculator* stack."
 
 ;;;###autoload
 (defun calc (&optional arg full-display interactive)
-  "The Emacs Calculator.  Full documentation is listed under \"calc-mode\"."
+  "The Emacs Calculator.  Full documentation is listed under `calc-mode'."
   (interactive "P\ni\np")
   (if arg
       (unless (eq arg 0)
@@ -1663,7 +1663,7 @@ See calc-keypad for details."
     (let* ((fmt (car calc-float-format))
 	   (figs (nth 1 calc-float-format))
 	   (new-mode-string
-	    (format "Calc%s%s: %d %s %-14s"
+	    (format "Calc%s%s: %d %s %s"
 		    (if (and calc-embedded-info
                              (eq (aref calc-embedded-info 1) (current-buffer)))
                         "Embed" "")
@@ -3400,7 +3400,12 @@ See Info node `(calc)Defining Functions'."
     (cons key key)))
 
 (defun calc-unread-command (&optional input)
-  (push (or input last-command-event) unread-command-events))
+  (let ((event (or input last-command-event)))
+    ;; Avoid recording twice the keys pressed while defining a
+    ;; keyboard macro.
+    (when defining-kbd-macro
+      (setq event (cons 'no-record event)))
+    (push event unread-command-events)))
 
 (defun calc-clear-unread-commands ()
   (setq unread-command-events nil))

@@ -394,7 +394,12 @@ for language-specific arguments."
   "Indicates whether ispell should skip spell checking of SGML markup.
 If t, always skip SGML markup; if nil, never skip; if non-t and non-nil,
 guess whether SGML markup should be skipped according to the name of the
-buffer's major mode."
+buffer's major mode.
+
+SGML markup is any text inside the brackets \"<>\" or entities
+such as \"&amp;\".  See `ispell-html-skip-alists' for more details.
+
+This variable affects spell-checking of HTML, XML, and SGML files."
   :type '(choice (const :tag "always" t) (const :tag "never" nil)
 		 (const :tag "use-mode-name" use-mode-name))
   :group 'ispell)
@@ -1927,12 +1932,7 @@ nil           word is correct or spelling is accepted.
 quit          spell session exited."
   (interactive (list ispell-following-word ispell-quietly current-prefix-arg t))
   (cond
-   ((and region
-	 (if (featurep 'emacs)
-	     (use-region-p)
-	   (and (boundp 'transient-mark-mode) transient-mark-mode
-		(boundp 'mark-active) mark-active
-		(not (eq (region-beginning) (region-end))))))
+   ((and region (use-region-p))
     (ispell-region (region-beginning) (region-end)))
    (continue (ispell-continue))
    (t
@@ -2876,19 +2876,23 @@ Keeps argument list for future Ispell invocations for no async support."
 	(setq ispell-filter nil ispell-filter-continue nil)
       ;; may need to restart to select new personal dictionary.
       (ispell-kill-ispell t)
-      (message "Starting new Ispell process %s with %s dictionary..."
-	       ispell-program-name
-	       (or ispell-local-dictionary ispell-dictionary "default"))
-      (sit-for 0)
-      (setq ispell-library-directory (ispell-check-version)
-            ;; Assign a non-nil value to ispell-process-directory
-            ;; before calling ispell-start-process, since that
-            ;; function needs it to set default-directory when
-            ;; ispell-async-processp is nil.
-	    ispell-process-directory default-directory
-	    ispell-process (ispell-start-process)
-	    ispell-filter nil
-	    ispell-filter-continue nil)
+      (let ((reporter
+             (make-progress-reporter
+              (format "Starting new Ispell process %s with %s dictionary..."
+	              ispell-program-name
+	              (or ispell-local-dictionary ispell-dictionary
+                          "default")))))
+        (sit-for 0)
+        (setq ispell-library-directory (ispell-check-version)
+              ;; Assign a non-nil value to ispell-process-directory
+              ;; before calling ispell-start-process, since that
+              ;; function needs it to set default-directory when
+              ;; ispell-async-processp is nil.
+	      ispell-process-directory default-directory
+	      ispell-process (ispell-start-process)
+	      ispell-filter nil
+	      ispell-filter-continue nil)
+        (progress-reporter-done reporter))
 
       (unless (equal ispell-process-directory (expand-file-name "~/"))
 	;; At this point, `ispell-process-directory' will be "~/" unless using

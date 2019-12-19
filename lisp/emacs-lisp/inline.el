@@ -69,10 +69,9 @@
 
 (require 'macroexp)
 
-(def-edebug-spec inline-quote (backquote-form))
 (defmacro inline-quote (_exp)
   "Similar to backquote, but quotes code and only accepts , and not ,@."
-  (declare (debug t))
+  (declare (debug backquote-form))
   (error "inline-quote can only be used within define-inline"))
 
 (defmacro inline-const-p (_exp)
@@ -91,17 +90,16 @@
   (error "inline-error can only be used within define-inline"))
 
 (defmacro inline--leteval (_var-exp &rest _body)
-  (declare (indent 1) (debug (sexp &rest body)))
+  (declare (indent 1) (debug (sexp body)))
   ;; BEWARE: if we're here it's presumably via macro-expansion of
   ;; inline-letevals, so signal the error in terms of the user's code.
   (error "inline-letevals can only be used within define-inline"))
 (defmacro inline--letlisteval (_list &rest _body)
-  (declare (indent 1) (debug (sexp &rest body)))
+  (declare (indent 1) (debug (sexp body)))
   ;; BEWARE: if we're here it's presumably via macro-expansion of
   ;; inline-letevals, so signal the error in terms of the user's code.
   (error "inline-letevals can only be used within define-inline"))
 
-(def-edebug-spec inline-letevals '(sexp body))
 (defmacro inline-letevals (vars &rest body)
   "Make sure the expressions in VARS are evaluated.
 VARS should be a list of elements of the form (VAR EXP) or just VAR, in case
@@ -112,7 +110,7 @@ of arguments, in which case each argument is evaluated and the resulting
 new list is re-bound to VAR.
 
 After VARS is handled, BODY is evaluated in the new environment."
-  (declare (indent 1) (debug (sexp &rest form)))
+  (declare (indent 1) (debug (sexp body)))
   (cond
    ((consp vars)
     `(inline--leteval ,(pop vars) (inline-letevals ,vars ,@body)))

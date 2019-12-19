@@ -155,14 +155,22 @@ treated as a literal character."
   :type 'hook
   :group 'eshell-arg)
 
+(defvar eshell-arg-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c M-b") #'eshell-insert-buffer-name)
+    map))
+
 ;;; Functions:
+
+(define-minor-mode eshell-arg-mode
+  "Minor mode for the arg eshell module.
+
+\\{eshell-arg-mode-map}"
+  :keymap eshell-arg-mode-map)
 
 (defun eshell-arg-initialize ()     ;Called from `eshell-mode' via intern-soft!
   "Initialize the argument parsing code."
-  ;; This is supposedly run after enabling esh-mode, when eshell-mode-map
-  ;; already exists.
-  (defvar eshell-command-map)
-  (define-key eshell-command-map [(meta ?b)] 'eshell-insert-buffer-name)
+  (eshell-arg-mode)
   (set (make-local-variable 'eshell-inside-quote-regexp) nil)
   (set (make-local-variable 'eshell-outside-quote-regexp) nil))
 
@@ -294,13 +302,7 @@ Point is left at the end of the arguments."
   "Intelligently backslash the character occurring in STRING at INDEX.
 If the character is itself a backslash, it needs no escaping."
   (let ((char (aref string index)))
-    (if (and (eq char ?\\)
-	     ;; In Emacs directory-sep-char is always ?/, so this does nothing.
-	     (not (and (featurep 'xemacs)
-		       (featurep 'mswindows)
-		       (eq directory-sep-char ?\\)
-		       (eq (1- (string-width string))
-			   index))))
+    (if (eq char ?\\)
 	(char-to-string char)
       (if (memq char eshell-special-chars-outside-quoting)
 	  (string ?\\ char)))))

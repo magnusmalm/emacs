@@ -545,7 +545,7 @@ buffer local variables c-new-BEG and c-new-END.
 The functions are called even when font locking is disabled.
 
 When the mode is initialized, these functions are called with
-parameters \(point-min), \(point-max) and <buffer size>.")
+parameters (point-min), (point-max) and <buffer size>.")
 
 (c-lang-defconst c-before-context-fontification-functions
   t 'c-context-expand-fl-region
@@ -878,7 +878,7 @@ literal are multiline."
   t (mapcar (lambda (delim)
 	      (cons
 	       delim
-	       (concat "\\(\\\\\\(.\\|\n\\|\r\\)\\|[^\\\n\r"
+	       (concat "\\(\\\\\\(.\\|\n\\)\\|[^\\\n\r"
 		       (string delim)
 		       "]\\)*")))
 	    (and
@@ -1205,6 +1205,36 @@ since CC Mode treats every identifier as an expression."
   ;; The operators as a flat list (without duplicates).
   t (c-filter-ops (c-lang-const c-operators) t t))
 
+(c-lang-defconst c-operator-re
+  ;; A regexp which matches any operator.
+  t (regexp-opt (c-lang-const c-operator-list)))
+(c-lang-defvar c-operator-re (c-lang-const c-operator-re))
+
+(c-lang-defconst c-bin-tern-operators
+  ;; All binary and ternary operators
+  t (c-filter-ops (c-lang-const c-operators)
+		  '(left-assoc right-assoc right-assoc-sequence)
+		  t))
+
+(c-lang-defconst c-unary-operators
+  ;; All unary operators.
+  t (c-filter-ops (c-lang-const c-operators)
+		  '(prefix postfix postfix-if-paren)
+		  t))
+
+(c-lang-defconst c-non-after-{}-operators
+  "Operators which can't appear after a block {..} construct."
+  t (c--set-difference (c-lang-const c-bin-tern-operators)
+		       (c-lang-const c-unary-operators)
+		       :test #'string-equal)
+  awk (remove "/" (c-lang-const c-non-after-{}-operators)))
+
+(c-lang-defconst c-non-after-{}-ops-re
+  ;; A regexp matching operators which can't appear after a block {..}
+  ;; construct.
+  t (regexp-opt (c-lang-const c-non-after-{}-operators)))
+(c-lang-defvar c-non-after-{}-ops-re (c-lang-const c-non-after-{}-ops-re))
+
 (c-lang-defconst c-overloadable-operators
   "List of the operators that are overloadable, in their \"identifier
 form\".  See also `c-op-identifier-prefix'."
@@ -1376,6 +1406,23 @@ operators."
 		    (lambda (op) (substring op 1)))))
 (c-lang-defvar c-<-op-cont-regexp (c-lang-const c-<-op-cont-regexp))
 
+(c-lang-defconst c-<-pseudo-digraph-cont-regexp
+  "Regexp matching the continuation of a pseudo digraph starting \"<\".
+This is used only in C++ Mode, where \"<::\" is handled as a
+template opener followed by the \"::\" operator - usually."
+  t regexp-unmatchable
+  c++ "::\\([^:>]\\|$\\)")
+(c-lang-defvar c-<-pseudo-digraph-cont-regexp
+	       (c-lang-const c-<-pseudo-digraph-cont-regexp))
+
+(c-lang-defconst c-<-pseudo-digraph-cont-len
+  "The maximum length of the main bit of a `c-<pseudp-digraph-cont-regexp' match.
+This doesn't count the merely contextual bits of the regexp match."
+  t 0
+  c++ 2)
+(c-lang-defvar c-<-pseudo-digraph-cont-len
+	       (c-lang-const c-<-pseudo-digraph-cont-len))
+
 (c-lang-defconst c->-op-cont-tokens
   ;; A list of second and subsequent characters of all multicharacter tokens
   ;; that begin with ">".
@@ -1409,15 +1456,17 @@ operators."
 (c-lang-defvar c->-op-without->-cont-regexp
   (c-lang-const c->-op-without->-cont-regexp))
 
-(c-lang-defconst c-multichar->-op-not->>-regexp
-  ;; Regexp matching multichar tokens containing ">", except ">>"
+(c-lang-defconst c-multichar->-op-not->>->>>-regexp
+  ;; Regexp matching multichar tokens containing ">", except ">>" and ">>>"
   t (c-make-keywords-re nil
-      (delete ">>"
-	      (c-filter-ops (c-lang-const c-all-op-syntax-tokens)
-			    t
-			    "\\(.>\\|>.\\)"))))
-(c-lang-defvar c-multichar->-op-not->>-regexp
-  (c-lang-const c-multichar->-op-not->>-regexp))
+      (c--set-difference
+       (c-filter-ops (c-lang-const c-all-op-syntax-tokens)
+		     t
+		     "\\(.>\\|>.\\)")
+       '(">>" ">>>")
+       :test 'string-equal)))
+(c-lang-defvar c-multichar->-op-not->>->>>-regexp
+  (c-lang-const c-multichar->-op-not->>->>>-regexp))
 
 (c-lang-defconst c-:-op-cont-tokens
   ;; A list of second and subsequent characters of all multicharacter tokens
@@ -1442,11 +1491,55 @@ operators."
   t "^;{}?:")
 (c-lang-defvar c-stmt-delim-chars (c-lang-const c-stmt-delim-chars))
 
+(c-lang-defconst c-stmt-boundary-skip-chars
+  ;; Like `c-stmt-delim-chars', but augmented by "#" for languages with CPP
+  ;; constructs, and for C++ Mode, also by "[", to help deal with C++
+  ;; attributes.
+  t (if (c-lang-const c-opt-cpp-symbol)
+	(concat (substring (c-lang-const c-stmt-delim-chars) 0 1) ; "^"
+		(c-lang-const c-opt-cpp-symbol) ; usually #
+		(substring (c-lang-const c-stmt-delim-chars) 1)) ; ";{}?:"
+      (c-lang-const c-stmt-delim-chars))
+  c++ (concat (substring (c-lang-const c-stmt-boundary-skip-chars) 0 1) ; "^"
+	      "["
+	      (substring (c-lang-const c-stmt-boundary-skip-chars) 1))) ; ";{}?:"
+(c-lang-defvar c-stmt-boundary-skip-chars
+  (c-lang-const c-stmt-boundary-skip-chars))
+
+(c-lang-defconst c-stmt-boundary-skip-list
+  ;; The characters (apart from the initial ^) in `c-stmt-boundary-skip-chars'
+  ;; as a list of characters.
+  t (append (substring (c-lang-const c-stmt-boundary-skip-chars) 1) nil))
+(c-lang-defvar c-stmt-boundary-skip-list
+  (c-lang-const c-stmt-boundary-skip-list))
+
 (c-lang-defconst c-stmt-delim-chars-with-comma
   ;; Variant of `c-stmt-delim-chars' that additionally contains ','.
   t    "^;,{}?:")
 (c-lang-defvar c-stmt-delim-chars-with-comma
   (c-lang-const c-stmt-delim-chars-with-comma))
+
+(c-lang-defconst c-stmt-boundary-skip-chars-with-comma
+  ;; Variant of `c-stmt-boundary-skip-chars' also containing ','.
+  t (if (c-lang-const c-opt-cpp-symbol)
+	(concat (substring (c-lang-const c-stmt-delim-chars-with-comma) 0 1)
+		(c-lang-const c-opt-cpp-symbol) ; usually #
+		(substring (c-lang-const c-stmt-delim-chars-with-comma) 1))
+      (c-lang-const c-stmt-delim-chars-with-comma))
+  c++ (concat
+       (substring (c-lang-const c-stmt-boundary-skip-chars-with-comma) 0 1) ; "^"
+       "["
+       (substring (c-lang-const c-stmt-boundary-skip-chars-with-comma) 1))) ; ";,{}?:"
+(c-lang-defvar c-stmt-boundary-skip-chars-with-comma
+  (c-lang-const c-stmt-boundary-skip-chars-with-comma))
+
+(c-lang-defconst c-stmt-boundary-skip-list-with-comma
+  ;; Variant of `c-stmt-boundary-skip-list' also including a comma.
+  t (append (substring (c-lang-const c-stmt-boundary-skip-chars-with-comma)
+		       1)
+	    nil))
+(c-lang-defvar c-stmt-boundary-skip-list-with-comma
+  (c-lang-const c-stmt-boundary-skip-list-with-comma))
 
 (c-lang-defconst c-pack-ops
   "Ops which signal C++11's \"parameter pack\""
@@ -1496,7 +1589,7 @@ Currently (2016-08) only used in C++ mode."
 
 (c-lang-defconst c-pre-lambda-tokens-re
   ;; Regexp matching any token in the list `c-pre-lambda-tokens'.
-  t (regexp-opt (c-lang-const c-pre-lambda-tokens)))
+  t (c-make-keywords-re t (c-lang-const c-pre-lambda-tokens)))
 (c-lang-defvar c-pre-lambda-tokens-re (c-lang-const c-pre-lambda-tokens-re))
 
 ;;; Syntactic whitespace.
@@ -1608,7 +1701,7 @@ backslash."
 current line, if any, or nil in those languages without block
 comments.  When a match is found, submatch 1 contains the comment
 ender."
-  t "\\(\\*/\\)\\([^*]\\|\\*+[^/]\\)*$"
+  t "\\(\\*/\\)\\([^*]\\|\\*+\\([^*/]\\|$\\)\\)*$"
   awk nil)
 (c-lang-defvar c-last-c-comment-end-on-line-re
 	       (c-lang-const c-last-c-comment-end-on-line-re))
@@ -1618,7 +1711,7 @@ ender."
 current ine, if any, or nil in those languages without block
 comments.  When a match is found, submatch 1 contains the comment
 starter."
-  t "\\(/\\*\\)\\([^*]\\|\\*+[^/]\\)*$"
+  t "\\(/\\*\\)\\([^*]\\|\\*+\\([^*/]\\|$\\)\\)*$"
   awk nil)
 (c-lang-defvar c-last-open-c-comment-start-on-line-re
 	       (c-lang-const c-last-open-c-comment-start-on-line-re))
@@ -2245,7 +2338,7 @@ will be handled."
 (c-lang-defvar c-typedef-decl-key (c-lang-const c-typedef-decl-key))
 
 (c-lang-defconst c-typeless-decl-kwds
-  "Keywords introducing declarations where the \(first) identifier
+  "Keywords introducing declarations where the (first) identifier
 \(declarator) follows directly after the keyword, without any type.
 
 If any of these also are on `c-type-list-kwds', `c-ref-list-kwds',
@@ -2349,7 +2442,7 @@ Note that unrecognized plain symbols are skipped anyway if they occur
 before the type, so such things are not necessary to mention here.
 Mentioning them here is necessary only if they can occur in other
 places, or if they are followed by a construct that must be skipped
-over \(like the parens in the \"__attribute__\" and \"__declspec\"
+over (like the parens in the \"__attribute__\" and \"__declspec\"
 examples above).  In the last case, they alse need to be present on
 one of `c-type-list-kwds', `c-ref-list-kwds',
 `c-colon-type-list-kwds', `c-paren-nontype-kwds', `c-paren-type-kwds',
@@ -2481,7 +2574,7 @@ The keywords on list are assumed to also be present on one of the
 
 (c-lang-defconst c-postfix-decl-spec-kwds
   "Keywords introducing extra declaration specifiers in the region
-between the header and the body \(i.e. the \"K&R-region\") in
+between the header and the body (i.e. the \"K&R-region\") in
 declarations."
   t    nil
   java '("extends" "implements" "throws")
@@ -2833,7 +2926,7 @@ expressions."
 
 (c-lang-defconst c-inexpr-block-kwds
   "Keywords that start constructs followed by statement blocks which can
-be used in expressions \(the gcc extension for this in C and C++ is
+be used in expressions (the gcc extension for this in C and C++ is
 handled separately by `c-recognize-paren-inexpr-blocks')."
   t    nil
   pike '("catch" "gauge"))
@@ -3310,7 +3403,7 @@ possible for good performance."
 identifier in a declaration, e.g. the \"*\" in \"char *argv\".  This
 regexp should match \"(\" if parentheses are valid in declarators.
 The end of the first submatch is taken as the end of the operator.
-Identifier syntax is in effect when this is matched \(see
+Identifier syntax is in effect when this is matched (see
 `c-identifier-syntax-table')."
   t (if (c-lang-const c-type-modifier-kwds)
 	(concat (regexp-opt (c-lang-const c-type-modifier-kwds) t) "\\>")
@@ -3347,11 +3440,11 @@ Identifier syntax is in effect when this is matched \(see
   'dont-doc)
 
 (c-lang-defconst c-type-decl-operator-prefix-key
-  "Regexp matching any declarator operator which isn't a keyword
+  "Regexp matching any declarator operator which isn't a keyword,
 that might precede the identifier in a declaration, e.g. the
 \"*\" in \"char *argv\".  The end of the first submatch is taken
 as the end of the operator.  Identifier syntax is in effect when
-this is matched \(see `c-identifier-syntax-table')."
+this is matched (see `c-identifier-syntax-table')."
   t ;; Default to a regexp that never matches.
     regexp-unmatchable
   ;; Check that there's no "=" afterwards to avoid matching tokens

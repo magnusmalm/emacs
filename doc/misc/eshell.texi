@@ -177,9 +177,6 @@ integration with Emacs 21.
 @item
 Alex Schroeder contributed code for interactively querying the user
 before overwriting files.
-
-@item
-Sudish Joseph helped with some XEmacs compatibility issues.
 @end itemize
 
 Apart from these, a lot of people have sent suggestions, ideas,
@@ -462,10 +459,14 @@ The n-th entry of the history ring can be applied with the @samp{!n}
 command.  If @code{n} is negative, the entry is counted from the end
 of the history ring.
 
-@samp{!foo} expands to the last command beginning with @code{foo}, and
-@samp{!?foo} to the last command containing @code{foo}.  The n-th
-argument of the last command beginning with @code{foo} is accessible
-by @code{!foo:n}.
+@cindex event designators
+@findex eshell-expand-history-references
+When history event designators are enabled (by adding
+@code{eshell-expand-history-references} to
+@code{eshell-expand-input-functions}), @samp{!foo} expands to the last
+command beginning with @code{foo}, and @samp{!?foo} to the last
+command containing @code{foo}.  The n-th argument of the last command
+beginning with @code{foo} is accessible by @code{!foo:n}.
 
 The history ring is loaded from a file at the start of every session,
 and written back to the file at the end of every session.  The file path
@@ -799,16 +800,6 @@ general.  If I change the call to @code{eshell-copy-handles} in
 @code{eshell-rewrite-for-command} to use @code{eshell-protect}, it seems
 to work, but the output occurs after the prompt is displayed.  The whole
 structured command thing is too complicated at present.
-
-@item Error with @command{bc} in @code{eshell-test}
-
-On some XEmacs system, the subprocess interaction test fails
-inexplicably, although @command{bc} works fine at the command prompt.
-
-@item Eshell does not delete @file{*Help*} buffers in XEmacs 21.1.8+
-
-In XEmacs 21.1.8, the @file{*Help*} buffer has been renamed such that
-multiple instances of the @file{*Help*} buffer can exist.
 
 @item Pcomplete sometimes gets stuck
 

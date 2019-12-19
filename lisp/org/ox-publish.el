@@ -907,7 +907,7 @@ PROJECT is the current project."
 
 (defun org-publish-sitemap-default (title list)
   "Default site map, as a string.
-TITLE is the the title of the site map.  LIST is an internal
+TITLE is the title of the site map.  LIST is an internal
 representation for the files to include, as returned by
 `org-list-to-lisp'.  PROJECT is the current project."
   (concat "#+TITLE: " title "\n\n"
@@ -1348,7 +1348,7 @@ does not exist."
 	       (expand-file-name (or (file-symlink-p file) file)
 				 (file-name-directory file)))))
     (if (not attr) (error "No such file: \"%s\"" file)
-      (encode-time (file-attribute-modification-time attr) 'integer))))
+      (time-convert (file-attribute-modification-time attr) 'integer))))
 
 
 (provide 'ox-publish)

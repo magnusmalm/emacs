@@ -85,13 +85,12 @@ the variable is set using \\[customize]."
 					 image-file-name-extensions)
 				  t)
 		      "\\'"))))
-    (if image-file-name-regexps
-	(mapconcat 'identity
-		   (if exts-regexp
-		       (cons exts-regexp image-file-name-regexps)
-		     image-file-name-regexps)
-		   "\\|")
-      exts-regexp)))
+    (mapconcat
+     'identity
+     (delq nil (list exts-regexp
+		     image-file-name-regexps
+		     (car (rassq 'imagemagick image-type-file-name-regexps))))
+     "\\|")))
 
 
 ;;;###autoload
@@ -140,7 +139,9 @@ absolute file name and number of characters inserted."
   "Yank handler for inserting an image into a buffer."
   (let ((len (length string))
 	(image (get-text-property 0 'display string)))
-    (remove-text-properties 0 len yank-excluded-properties string)
+    (if (eq yank-excluded-properties t)
+        (set-text-properties 0 len () string)
+      (remove-list-of-text-properties 0 len yank-excluded-properties string))
     (if (consp image)
 	(add-text-properties 0
 			     (or (next-single-property-change 0 'image-counter string)

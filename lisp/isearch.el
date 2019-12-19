@@ -193,8 +193,11 @@ If nil, use function `isearch-message'.")
 
 (defvar isearch-wrap-function nil
   "Function to call to wrap the search when search is failed.
-If nil, move point to the beginning of the buffer for a forward search,
-or to the end of the buffer for a backward search.")
+The function is called with no parameters, and would typically
+move point.
+
+If nil, move point to the beginning of the buffer for a forward
+search, or to the end of the buffer for a backward search.")
 
 (defvar isearch-push-state-function nil
   "Function to save a function restoring the mode-specific Isearch state
@@ -204,8 +207,8 @@ to the search status stack.")
   "Predicate to filter hits of Isearch and replace commands.
 Isearch hits that don't satisfy the predicate will be skipped.
 The value should be a function of two arguments; it will be
-called with the the positions of the start and the end of the
-text matched by Isearch and replace commands.  If this function
+called with the positions of the start and the end of the text
+matched by Isearch and replace commands.  If this function
 returns nil, Isearch and replace commands will continue searching
 without stopping at resp. replacing this match.
 
@@ -511,6 +514,9 @@ This is like `describe-bindings', but displays only Isearch keys."
     (define-key map [isearch-yank-kill]
       '(menu-item "Current kill" isearch-yank-kill
                   :help "Append current kill to search string"))
+    (define-key map [isearch-yank-until-char]
+      '(menu-item "Until char..." isearch-yank-until-char
+                  :help "Yank from point to specified character into search string"))
     (define-key map [isearch-yank-line]
       '(menu-item "Rest of line" isearch-yank-line
                   :help "Yank the rest of the current line on search string"))
@@ -702,6 +708,7 @@ This is like `describe-bindings', but displays only Isearch keys."
     (define-key map "\M-\C-d" 'isearch-del-char)
     (define-key map "\M-\C-y" 'isearch-yank-char)
     (define-key map    "\C-y" 'isearch-yank-kill)
+    (define-key map "\M-\C-z" 'isearch-yank-until-char)
     (define-key map "\M-s\C-e" 'isearch-yank-line)
 
     (define-key map "\M-s\M-<" 'isearch-beginning-of-buffer)
@@ -995,6 +1002,8 @@ Type \\[isearch-yank-word-or-char] to yank next word or character in buffer
 Type \\[isearch-del-char] to delete character from end of search string.
 Type \\[isearch-yank-char] to yank char from buffer onto end of search\
  string and search for it.
+Type \\[isearch-yank-until-char] to yank from point until the next instance of a
+ specified character onto end of search string and search for it.
 Type \\[isearch-yank-line] to yank rest of line onto end of search string\
  and search for it.
 Type \\[isearch-yank-kill] to yank the last string of killed text.
@@ -1361,7 +1370,6 @@ NOPUSH is t and EDIT is t."
   (remove-hook 'post-command-hook 'isearch-post-command-hook)
   (remove-hook 'mouse-leave-buffer-hook 'isearch-mouse-leave-buffer)
   (remove-hook 'kbd-macro-termination-hook 'isearch-done)
-  (setq isearch-lazy-highlight-start nil)
   (when (buffer-live-p isearch--current-buffer)
     (with-current-buffer isearch--current-buffer
       (setq isearch--current-buffer nil)
@@ -1968,6 +1976,7 @@ The command then executes BODY and updates the isearch prompt."
          ,(format "Toggle %s searching on or off.%s" mode
                   (if docstring (concat "\n" docstring) ""))
          (interactive)
+         (unless isearch-mode (isearch-mode t))
          ,@(when function
              `((setq isearch-regexp-function
                      (unless (eq isearch-regexp-function #',function)
@@ -2000,7 +2009,7 @@ Turning on character-folding turns off regexp mode.")
   "Text properties that are added to the isearch prompt.")
 
 (defun isearch--momentary-message (string)
-  "Print STRING at the end of the isearch prompt for 1 second"
+  "Print STRING at the end of the isearch prompt for 1 second."
   (let ((message-log-max nil))
     (message "%s%s%s"
              (isearch-message-prefix nil isearch-nonincremental)
@@ -2181,16 +2190,19 @@ matches arbitrary non-symbol whitespace.  Otherwise if LAX is non-nil,
 the beginning or the end of the string need not match a symbol boundary."
   (let ((not-word-symbol-re
 	 ;; This regexp matches all syntaxes except word and symbol syntax.
-	 ;; FIXME: Replace it with something shorter if possible (bug#14602).
-	 "\\(?:\\s-\\|\\s.\\|\\s(\\|\\s)\\|\\s\"\\|\\s\\\\|\\s/\\|\\s$\\|\\s'\\|\\s<\\|\\s>\\|\\s@\\|\\s!\\|\\s|\\)+"))
+	 "\\(?:\\s-\\|\\s.\\|\\s(\\|\\s)\\|\\s\"\\|\\s\\\\|\\s/\\|\\s$\\|\\s'\\|\\s<\\|\\s>\\|\\s!\\|\\s|\\)+"))
     (cond
      ((equal string "") "")
-     ((string-match-p (format "\\`%s\\'" not-word-symbol-re) string) not-word-symbol-re)
+     ((string-match-p (format "\\`%s\\'" not-word-symbol-re) string)
+      not-word-symbol-re)
      (t (concat
-	 (if (string-match-p (format "\\`%s" not-word-symbol-re) string) not-word-symbol-re
+	 (if (string-match-p (format "\\`%s" not-word-symbol-re) string)
+	     not-word-symbol-re
 	   "\\_<")
-	 (mapconcat 'regexp-quote (split-string string not-word-symbol-re t) not-word-symbol-re)
-	 (if (string-match-p (format "%s\\'" not-word-symbol-re) string) not-word-symbol-re
+	 (mapconcat 'regexp-quote (split-string string not-word-symbol-re t)
+		    not-word-symbol-re)
+	 (if (string-match-p (format "%s\\'" not-word-symbol-re) string)
+	     not-word-symbol-re
 	   (unless lax "\\_>")))))))
 
 ;; Search with lax whitespace
@@ -2554,6 +2566,23 @@ If optional ARG is non-nil, pull in the next ARG characters."
 If optional ARG is non-nil, pull in the next ARG words."
   (interactive "p")
   (isearch-yank-internal (lambda () (forward-word arg) (point))))
+
+(defun isearch-yank-until-char (char)
+  "Pull everything until next instance of CHAR from buffer into search string.
+Interactively, prompt for CHAR.
+This is often useful for keyboard macros, for example in programming
+languages or markup languages in which CHAR marks a token boundary."
+  (interactive "cYank until character: ")
+  (isearch-yank-internal
+   (lambda () (let ((inhibit-field-text-motion t))
+                (condition-case nil
+                    (progn
+                      (search-forward (char-to-string char))
+                      (forward-char -1))
+                  (search-failed
+                   (message "`%c' not found" char)
+                   (sit-for 2)))
+                (point)))))
 
 (defun isearch-yank-line (&optional arg)
   "Pull rest of line from buffer into search string.
@@ -3940,8 +3969,9 @@ Attempt to do the search exactly the way the pending Isearch would."
 		  (if isearch-lazy-highlight-forward
 		      (setq isearch-lazy-highlight-end (point-min))
 		    (setq isearch-lazy-highlight-start (point-max)))
-		  (run-at-time lazy-highlight-interval nil
-			       'isearch-lazy-highlight-buffer-update))
+		  (setq isearch-lazy-highlight-timer
+			(run-at-time lazy-highlight-interval nil
+				     'isearch-lazy-highlight-buffer-update)))
 	      (setq isearch-lazy-highlight-timer
 		    (run-at-time lazy-highlight-interval nil
 				 'isearch-lazy-highlight-update)))))))))

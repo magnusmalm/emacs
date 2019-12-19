@@ -95,10 +95,18 @@ if ARG is `toggle'; disable the mode otherwise.")
 \\{%s}" mode-pretty-name keymap-sym))))
     (if (string-match-p "\\bARG\\b" doc)
         doc
-      (let ((argdoc (format easy-mmode--arg-docstring
-                            mode-pretty-name)))
+      (let* ((fill-prefix nil)
+             (docs-fc (bound-and-true-p emacs-lisp-docstring-fill-column))
+             (fill-column (if (integerp docs-fc) docs-fc 65))
+             (argdoc (format easy-mmode--arg-docstring mode-pretty-name))
+             (filled (if (fboundp 'fill-region)
+                         (with-temp-buffer
+                           (insert argdoc)
+                           (fill-region (point-min) (point-max) 'left t)
+                           (buffer-string))
+                       argdoc)))
         (replace-regexp-in-string "\\(\n\n\\|\\'\\)\\(.\\|\n\\)*\\'"
-                                  (concat argdoc "\\1")
+                                  (concat filled "\\1")
                                   doc nil nil 1)))))
 
 ;;;###autoload
@@ -363,18 +371,21 @@ No problems result if this variable is not bound.
 ;;;###autoload
 (defalias 'define-global-minor-mode 'define-globalized-minor-mode)
 ;;;###autoload
-(defmacro define-globalized-minor-mode (global-mode mode turn-on &rest keys)
+(defmacro define-globalized-minor-mode (global-mode mode turn-on &rest body)
   "Make a global mode GLOBAL-MODE corresponding to buffer-local minor MODE.
 TURN-ON is a function that will be called with no args in every buffer
   and that should try to turn MODE on if applicable for that buffer.
-KEYS is a list of CL-style keyword arguments.  As the minor mode
-  defined by this function is always global, any :global keyword is
-  ignored.  Other keywords have the same meaning as in `define-minor-mode',
-  which see.  In particular, :group specifies the custom group.
-  The most useful keywords are those that are passed on to the
-  `defcustom'.  It normally makes no sense to pass the :lighter
-  or :keymap keywords to `define-globalized-minor-mode', since these
-  are usually passed to the buffer-local version of the minor mode.
+Each of KEY VALUE is a pair of CL-style keyword arguments.  As
+  the minor mode defined by this function is always global, any
+  :global keyword is ignored.  Other keywords have the same
+  meaning as in `define-minor-mode', which see.  In particular,
+  :group specifies the custom group.  The most useful keywords
+  are those that are passed on to the `defcustom'.  It normally
+  makes no sense to pass the :lighter or :keymap keywords to
+  `define-globalized-minor-mode', since these are usually passed
+  to the buffer-local version of the minor mode.
+BODY contains code to execute each time the mode is enabled or disabled.
+  It is executed after toggling the mode, and before running GLOBAL-MODE-hook.
 
 If MODE's set-up depends on the major mode in effect when it was
 enabled, then disabling and reenabling MODE should make MODE work
@@ -384,7 +395,9 @@ call another major mode in their body.
 
 When a major mode is initialized, MODE is actually turned on just
 after running the major mode's hook.  However, MODE is not turned
-on if the hook has explicitly disabled it."
+on if the hook has explicitly disabled it.
+
+\(fn GLOBAL-MODE MODE TURN-ON [KEY VALUE]... BODY...)"
   (declare (doc-string 2))
   (let* ((global-mode-name (symbol-name global-mode))
 	 (mode-name (symbol-name mode))
@@ -404,15 +417,16 @@ on if the hook has explicitly disabled it."
 	 keyw)
 
     ;; Check keys.
-    (while (keywordp (setq keyw (car keys)))
-      (setq keys (cdr keys))
+    (while (keywordp (setq keyw (car body)))
+      (pop body)
       (pcase keyw
-	(:group (setq group (nconc group (list :group (pop keys)))))
-	(:global (setq keys (cdr keys)))
-	(_ (push keyw extra-keywords) (push (pop keys) extra-keywords))))
+        (:group (setq group (nconc group (list :group (pop body)))))
+        (:global (pop body))
+        (_ (push keyw extra-keywords) (push (pop body) extra-keywords))))
 
     `(progn
        (progn
+         (put ',global-mode 'globalized-minor-mode t)
          :autoload-end
          (defvar ,MODE-major-mode nil)
          (make-variable-buffer-local ',MODE-major-mode))
@@ -446,7 +460,8 @@ See `%s' for more information on %s."
 	 ;; Go through existing buffers.
 	 (dolist (buf (buffer-list))
 	   (with-current-buffer buf
-	     (if ,global-mode (funcall #',turn-on) (when ,mode (,mode -1))))))
+             (if ,global-mode (funcall #',turn-on) (when ,mode (,mode -1)))))
+         ,@body)
 
        ;; Autoloading define-globalized-minor-mode autoloads everything
        ;; up-to-here.
@@ -611,7 +626,7 @@ ENDFUN should return the end position (with or without moving point).
 NARROWFUN non-nil means to check for narrowing before moving, and if
 found, do `widen' first and then call NARROWFUN with no args after moving.
 BODY is executed after moving to the destination location."
-  (declare (indent 5) (debug (exp exp exp def-form def-form &rest def-body)))
+  (declare (indent 5) (debug (exp exp exp def-form def-form def-body)))
   (let* ((base-name (symbol-name base))
 	 (prev-sym (intern (concat base-name "-prev")))
 	 (next-sym (intern (concat base-name "-next")))

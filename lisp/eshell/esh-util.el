@@ -511,19 +511,6 @@ list."
       (eshell-read-hosts eshell-hosts-file 'eshell-host-names
 			 'eshell-host-timestamp)))
 
-(and (featurep 'xemacs)
-     (not (fboundp 'subst-char-in-string))
-     (defun subst-char-in-string (fromchar tochar string &optional inplace)
-       "Replace FROMCHAR with TOCHAR in STRING each time it occurs.
-Unless optional argument INPLACE is non-nil, return a new string."
-       (let ((i (length string))
-	     (newstr (if inplace string (copy-sequence string))))
-	 (while (> i 0)
-	   (setq i (1- i))
-	   (if (eq (aref newstr i) fromchar)
-	       (aset newstr i tochar)))
-	 newstr)))
-
 (defsubst eshell-copy-environment ()
   "Return an unrelated copy of `process-environment'."
   (mapcar 'concat process-environment))
@@ -559,27 +546,6 @@ Unless optional argument INPLACE is non-nil, return a new string."
 	  (substring string 0 sublen)
 	string)))
 
-(defvar ange-cache)
-
-;; Partial reimplementation of Emacs's builtin directory-files-and-attributes.
-;; id-format not implemented.
-(and (featurep 'xemacs)
-     (not (fboundp 'directory-files-and-attributes))
-     (defun directory-files-and-attributes (directory &optional full match nosort _id-format)
-    "Return a list of names of files and their attributes in DIRECTORY.
-There are three optional arguments:
-If FULL is non-nil, return absolute file names.  Otherwise return names
- that are relative to the specified directory.
-If MATCH is non-nil, mention only file names that match the regexp MATCH.
-If NOSORT is non-nil, the list is not sorted--its order is unpredictable.
- NOSORT is useful if you plan to sort the result yourself."
-    (let ((directory (expand-file-name directory)) ange-cache)
-      (mapcar
-       (function
-	(lambda (file)
-	  (cons file (eshell-file-attributes (expand-file-name file directory)))))
-       (directory-files directory full match nosort)))))
-
 (defun eshell-directory-files-and-attributes (dir &optional full match nosort id-format)
   "Make sure to use the handler for `directory-file-and-attributes'."
   (let* ((dir (expand-file-name dir)))
@@ -600,10 +566,7 @@ If NOSORT is non-nil, the list is not sorted--its order is unpredictable.
 	  (setq host-users (cdr host-users))
 	  (cdr (assoc user host-users))))))
 
-;; Add an autoload for parse-time-string
-(if (and (not (fboundp 'parse-time-string))
-	 (locate-library "parse-time"))
-    (autoload 'parse-time-string "parse-time"))
+(autoload 'parse-time-string "parse-time")
 
 (eval-when-compile
   (require 'ange-ftp nil t))		; ange-ftp-parse-filename
@@ -649,17 +612,14 @@ If NOSORT is non-nil, the list is not sorted--its order is unpredictable.
 	       (size (string-to-number (match-string 5)))
 	       (name (ange-ftp-parse-filename))
 	       (mtime
-		(if (fboundp 'parse-time-string)
-		    (let ((moment (parse-time-string
-				   (match-string 6))))
-		      (if (nth 0 moment)
-			  (setcar (nthcdr 5 moment)
-				  (nth 5 (decode-time)))
-			(setcar (nthcdr 0 moment) 0)
-			(setcar (nthcdr 1 moment) 0)
-			(setcar (nthcdr 2 moment) 0))
-		      (encode-time moment))
-		  (ange-ftp-file-modtime (expand-file-name name dir))))
+		(let ((moment (parse-time-string (match-string 6))))
+		  (if (decoded-time-second moment)
+		      (setf (decoded-time-year moment)
+			    (decoded-time-year (decode-time)))
+		    (setf (decoded-time-second moment) 0)
+		    (setf (decoded-time-minute moment) 0)
+                    (setf (decoded-time-hour moment) 0))
+		  (encode-time moment)))
 	       symlink)
 	  (if (string-match "\\(.+\\) -> \\(.+\\)" name)
 	      (setq symlink (match-string 2 name)

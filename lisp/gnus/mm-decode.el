@@ -381,9 +381,11 @@ enables you to choose manually one of two types those mails include."
   :type 'directory
   :group 'mime-display)
 
-(defcustom mm-inline-large-images nil
-  "If t, then all images fit in the buffer.
-If `resize', try to resize the images so they fit."
+(defcustom mm-inline-large-images 'resize
+  "If nil, images larger than the window aren't displayed in the buffer.
+If `resize', try to resize the images so they fit in the buffer.
+If t, show the images as they are without resizing."
+  :version "27.1"
   :type '(radio
           (const :tag "Inline large images as they are." t)
           (const :tag "Resize large images." resize)
@@ -896,11 +898,11 @@ external if displayed external."
                                    (buffer-live-p gnus-summary-buffer))
 			  (when attachment-filename
 			    (with-current-buffer mm
-			      (rename-buffer (format "*mm* %s" attachment-filename) t)))
+			      (rename-buffer
+			       (format "*mm* %s" attachment-filename) t)))
 			  ;; So that we pop back to the right place, sort of.
 			  (switch-to-buffer gnus-summary-buffer)
 			  (switch-to-buffer mm))
-			(delete-other-windows)
 			(funcall method))
 		    (mm-save-part handle))
 		(when (and (not non-viewer)
@@ -1644,13 +1646,21 @@ If RECURSIVE, search recursively."
 	    (setq result (buffer-string))))))
     result))
 
-(defvar mm-security-handle nil)
-
 (defsubst mm-set-handle-multipart-parameter (handle parameter value)
   ;; HANDLE could be a CTL.
   (when handle
     (put-text-property 0 (length (car handle)) parameter value
 		       (car handle))))
+
+;; Interface functions and variables for the decryption/verification
+;; functions.
+(defvar mm-security-handle nil)
+(defun mm-sec-status (&rest keys)
+  (cl-loop for (key val) on keys by #'cddr
+	   do (mm-set-handle-multipart-parameter mm-security-handle key val)))
+
+(defun mm-sec-error (&rest keys)
+  (apply #'mm-sec-status (append '(sec-error t) keys)))
 
 (autoload 'mm-view-pkcs7 "mm-view")
 
@@ -1670,6 +1680,8 @@ If RECURSIVE, search recursively."
 		    (t (y-or-n-p
 			(format "Decrypt (S/MIME) part? "))))
 		   (mm-view-pkcs7 parts from))
+	  (goto-char (point-min))
+	  (insert "Content-type: text/plain\n\n")
 	  (setq parts (mm-dissect-buffer t)))))
      ((equal subtype "signed")
       (unless (and (setq protocol
@@ -1702,9 +1714,8 @@ If RECURSIVE, search recursively."
 	(save-excursion
 	  (if func
 	      (setq parts (funcall func parts ctl))
-	    (mm-set-handle-multipart-parameter
-	     mm-security-handle 'gnus-details
-	     (format "Unknown sign protocol (%s)" protocol))))))
+	    (mm-sec-error 'gnus-details
+			  (format "Unknown sign protocol (%s)" protocol))))))
      ((equal subtype "encrypted")
       (unless (setq protocol
 		    (mm-handle-multipart-ctl-parameter ctl 'protocol))
@@ -1734,11 +1745,28 @@ If RECURSIVE, search recursively."
 	(save-excursion
 	  (if func
 	      (setq parts (funcall func parts ctl))
-	    (mm-set-handle-multipart-parameter
-	     mm-security-handle 'gnus-details
-	     (format "Unknown encrypt protocol (%s)" protocol))))))
-     (t nil))
-    parts))
+	    (mm-sec-error
+	     'gnus-details
+	     (format "Unknown encrypt protocol (%s)" protocol)))))))
+    ;; Check the results (which are now in `parts').
+    (let ((err (get-text-property 0 'sec-error (car mm-security-handle))))
+      (if (or (not err)
+	      (not (equal subtype "encrypted")))
+	  parts
+	;; We had an error during decryption.  Report what it is.
+	(list
+	 (mm-make-handle
+	  (with-current-buffer (generate-new-buffer " *mm*")
+	    (insert "Error!  Result from decryption:\n\n"
+		    (or (get-text-property 0 'gnus-details
+					   (car mm-security-handle))
+			"")
+		    "\n\n"
+		    (or (get-text-property 0 'gnus-details
+					   (car mm-security-handle))
+			""))
+	    (current-buffer))
+	  '("text/plain")))))))
 
 (defun mm-multiple-handles (handles)
   (and (listp handles)
@@ -1829,7 +1857,6 @@ text/html;\\s-*charset=\\([^\t\n\r \"'>]+\\)[^>]*>" nil t)
       (shr-insert-document document)
       (unless (bobp)
 	(insert "\n"))
-      (mm-convert-shr-links)
       (mm-handle-set-undisplayer
        handle
        (let ((min (point-min-marker))
@@ -1837,40 +1864,6 @@ text/html;\\s-*charset=\\([^\t\n\r \"'>]+\\)[^>]*>" nil t)
          (lambda ()
 	   (let ((inhibit-read-only t))
 	     (delete-region min max))))))))
-
-(defvar shr-image-map)
-(defvar shr-map)
-(autoload 'widget-convert-button "wid-edit")
-(defvar widget-keymap)
-
-(defun mm-convert-shr-links ()
-  (let ((start (point-min))
-	end keymap)
-    (while (and start
-		(< start (point-max)))
-      (when (setq start (text-property-not-all start (point-max) 'shr-url nil))
-	(setq end (next-single-property-change start 'shr-url nil (point-max)))
-	(widget-convert-button
-	 'url-link start end
-	 :help-echo (get-text-property start 'help-echo)
-	 :keymap (setq keymap (copy-keymap
-			       (if (mm-images-in-region-p start end)
-				   shr-image-map
-				 shr-map)))
-	 (get-text-property start 'shr-url))
-	;; Mask keys that launch `widget-button-click'.
-	;; Those bindings are provided by `widget-keymap'
-	;; that is a parent of `gnus-article-mode-map'.
-	(dolist (key (where-is-internal 'widget-button-click widget-keymap))
-	  (unless (lookup-key keymap key)
-	    (define-key keymap key #'ignore)))
-	;; Avoid `shr-next-link' and `shr-previous-link' in `keymap' so
-	;; TAB and M-TAB run `widget-forward' and `widget-backward' instead.
-	(substitute-key-definition 'shr-next-link nil keymap)
-	(substitute-key-definition 'shr-previous-link nil keymap)
-	(dolist (overlay (overlays-at start))
-	  (overlay-put overlay 'face nil))
-	(setq start end)))))
 
 (defun mm-handle-filename (handle)
   "Return filename of HANDLE if any."

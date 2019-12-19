@@ -391,7 +391,7 @@ only affect the Gcc copy, but not the original message."
 (defun gnus-inews-make-draft (articles)
   `(lambda ()
      (gnus-inews-make-draft-meta-information
-      ,(gnus-group-decoded-name gnus-newsgroup-name) ',articles)))
+      ,gnus-newsgroup-name ',articles)))
 
 (autoload 'nnir-article-number "nnir" nil nil 'macro)
 (autoload 'nnir-article-group "nnir" nil nil 'macro)
@@ -1587,6 +1587,7 @@ this is a reply."
       (message-narrow-to-headers)
       (let ((gcc (or gcc (mail-fetch-field "gcc" nil t)))
 	    (cur (current-buffer))
+	    (encoded-cache message-encoded-mail-cache)
 	    groups group method group-art options
 	    mml-externalize-attachments)
 	(when gcc
@@ -1614,7 +1615,12 @@ this is a reply."
 	      (setq message-options (with-current-buffer cur message-options))
 	      (insert-buffer-substring cur)
 	      (run-hooks 'gnus-gcc-pre-body-encode-hook)
-	      (message-encode-message-body)
+	      ;; Avoid re-doing things like GPG-encoding secret parts.
+	      (if (not encoded-cache)
+		  (message-encode-message-body)
+		(erase-buffer)
+		(insert encoded-cache))
+	      (message-remove-header "gcc")
 	      (run-hooks 'gnus-gcc-post-body-encode-hook)
 	      (save-restriction
 		(message-narrow-to-headers)
@@ -1680,7 +1686,6 @@ this is a reply."
 (defun gnus-inews-insert-gcc (&optional group)
   "Insert the Gcc to say where the article is to be archived."
   (let* ((group (or group gnus-newsgroup-name))
-         (group (when group (gnus-group-decoded-name group)))
          (var (or gnus-outgoing-message-group gnus-message-archive-group))
 	 (gcc-self-val
 	  (and group (not (gnus-virtual-group-p group))

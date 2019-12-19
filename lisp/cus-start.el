@@ -324,6 +324,9 @@ Leaving \"Default\" unchecked is equivalent with specifying a default of
 			    ;; FIXME?
                             ;; :initialize custom-initialize-default
 			    :set custom-set-minor-mode)
+	     (tab-bar-mode (frames mouse) boolean nil
+                           ;; :initialize custom-initialize-default
+			   :set custom-set-minor-mode)
 	     (tool-bar-mode (frames mouse) boolean nil
                             ;; :initialize custom-initialize-default
 			    :set custom-set-minor-mode)
@@ -495,8 +498,8 @@ Leaving \"Default\" unchecked is equivalent with specifying a default of
                (const :tag "Silent" ignore)
                function))
 	     ;; undo.c
-	     (undo-limit undo integer)
-	     (undo-strong-limit undo integer)
+	     (undo-limit undo integer "27.1")
+	     (undo-strong-limit undo integer "27.1")
 	     (undo-outer-limit undo
 			       (choice integer
 				       (const :tag "No limit"
@@ -507,7 +510,7 @@ the undo info for the current command never gets discarded.
 This should only be chosen under exceptional circumstances,
 since it could result in memory overflow and make Emacs crash."
 					      nil))
-			       "22.1")
+			       "27.1")
 	     ;; window.c
 	     (temp-buffer-show-function windows (choice (const nil) function))
 	     (next-screen-context-lines windows integer)
@@ -588,6 +591,16 @@ since it could result in memory overflow and make Emacs crash."
 		      (const :tag "Text-image-horiz" :value text-image-horiz)
 		      (const :tag "System default" :value nil)) "24.1")
              (tool-bar-max-label-size frames integer "24.1")
+             (tab-bar-position
+              tab-bar (choice
+                       (const :tag "Tab bar above tool bar" nil)
+                       (const :tag "Tab bar below tool bar" t))
+              "27.1"
+              :set (lambda (sym val)
+                     (set-default sym val)
+                     ;; Redraw the bars:
+                     (tab-bar-mode -1)
+                     (tab-bar-mode 1)))
 	     (auto-hscroll-mode scrolling
                                 (choice
                                  (const :tag "Don't scroll automatically"
@@ -616,52 +629,78 @@ since it could result in memory overflow and make Emacs crash."
 		       (const :tag "Grow only" :value grow-only))
 	      "25.1")
 	     (display-raw-bytes-as-hex display boolean "26.1")
-             (display-line-numbers display-line-numbers
-                                   (choice
-                                    (const :tag "Off (nil)" :value nil)
-                                    (const :tag "Absolute line numbers"
-                                           :value t)
-                                    (const :tag "Relative line numbers"
-                                           :value relative)
-                                    (const :tag "Visually relative line numbers"
-                                           :value visual))
-                                   "26.1")
-             (display-line-numbers-width display-line-numbers
-                                 (choice
-                                  (const :tag "Dynamically computed"
-                                         :value nil)
-                                  (integer :menu-tag "Fixed number of columns"
-                                           :value 2
-                                           :format "%v"))
-                                 "26.1")
-             (display-line-numbers-current-absolute display-line-numbers
-                                 (choice
-                                  (const :tag "Display actual number of current line"
-                                         :value t)
-                                  (const :tag "Display zero as number of current line"
-                                         :value nil))
-                                 "26.1")
-             (display-line-numbers-widen display-line-numbers
-                                 (choice
-                                  (const :tag "Disregard narrowing when calculating line numbers"
-                                         :value t)
-                                  (const :tag "Count lines from beginning of narrowed region"
-                                         :value nil))
-                                 "26.1")
+             (display-line-numbers
+              display-line-numbers
+              (choice
+               (const :tag "Off (nil)" :value nil)
+               (const :tag "Absolute line numbers"
+                      :value t)
+               (const :tag "Relative line numbers"
+                      :value relative)
+               (const :tag "Visually relative line numbers"
+                      :value visual))
+              "26.1")
+             (display-line-numbers-width
+              display-line-numbers
+              (choice
+               (const :tag "Dynamically computed"
+                      :value nil)
+               (integer :menu-tag "Fixed number of columns"
+                        :value 2
+                        :format "%v"))
+              "26.1")
+             (display-line-numbers-current-absolute
+              display-line-numbers
+              (choice
+               (const :tag "Display actual number of current line"
+                      :value t)
+               (const :tag "Display zero as number of current line"
+                      :value nil))
+              "26.1")
+             (display-line-numbers-widen
+              display-line-numbers
+              (choice
+               (const :tag "Disregard narrowing when calculating line numbers"
+                      :value t)
+               (const :tag "Count lines from beginning of narrowed region"
+                      :value nil))
+              "26.1")
+             (display-line-numbers-major-tick
+              display-line-numbers
+              (choice
+               (const :tag "No line" 0)
+               (integer :tag "Multiples of"
+                        :value 10))
+              "27.1")
+             (display-line-numbers-minor-tick
+              display-line-numbers
+              (choice
+               (const :tag "No line" 0)
+               (integer :tag "Multiples of"
+                        :value 5))
+              "27.1")
 
-             (display-fill-column-indicator display-fill-column-indicator
-                                 boolean "27.1")
-             (display-fill-column-indicator-column display-fill-column-indicator
-                                 (choice
-                                  (const :tag "Use fill-column variable"
-                                         :value t)
-                                  (const :tag "Fixed column number"
-                                         :value 70
-                                         :format "%v")
-                                  integer)
-                                 "27.1")
-             (display-fill-column-indicator-character display-fill-column-indicator
-                                 character "27.1")
+             (display-fill-column-indicator
+              display-fill-column-indicator
+              boolean
+              "27.1"
+              :safe booleanp)
+             (display-fill-column-indicator-column
+              display-fill-column-indicator
+              (choice
+               (const :tag "Use fill-column variable"
+                      :value t)
+               (const :tag "Fixed column number"
+                      :value 70
+                      :format "%v")
+               integer)
+              "27.1"
+              :safe (lambda (value) (or (booleanp value) (integerp value))))
+             (display-fill-column-indicator-character
+              display-fill-column-indicator
+              character
+              "27.1"
+              :safe characterp)
 	     ;; xfaces.c
 	     (scalable-fonts-allowed display boolean "22.1")
 	     ;; xfns.c
@@ -713,6 +752,8 @@ since it could result in memory overflow and make Emacs crash."
 		      ;; Conditioned on x-create-frame, because that's
 		      ;; the condition for loadup.el to preload tool-bar.el.
 		      ((string-match "tool-bar-" (symbol-name symbol))
+		       (fboundp 'x-create-frame))
+		      ((string-match "tab-bar-" (symbol-name symbol))
 		       (fboundp 'x-create-frame))
 		      ((equal "vertical-centering-font-regexp"
 			      (symbol-name symbol))

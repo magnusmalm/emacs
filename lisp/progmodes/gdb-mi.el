@@ -154,7 +154,7 @@ May be manually changed by user with `gdb-select-frame'.")
   "Associative list of threads provided by \"-thread-info\" MI command.
 
 Keys are thread numbers (in strings) and values are structures as
-returned from -thread-info by `gdb-json-partial-output'. Updated in
+returned from -thread-info by `gdb-json-partial-output'.  Updated in
 `gdb-thread-list-handler-custom'.")
 
 (defvar gdb-running-threads-count nil
@@ -378,18 +378,18 @@ Must be a list of pairs with cars being buffers and cdr's being
 valid signal handlers.")
 
 (defgroup gdb nil
-  "GDB graphical interface"
+  "GDB graphical interface."
   :group 'tools
   :link '(info-link "(emacs)GDB Graphical Interface")
   :version "23.2")
 
 (defgroup gdb-non-stop nil
-  "GDB non-stop debugging settings"
+  "GDB non-stop debugging settings."
   :group 'gdb
   :version "23.2")
 
 (defgroup gdb-buffers nil
-  "GDB buffers"
+  "GDB buffers."
   :group 'gdb
   :version "23.2")
 
@@ -657,7 +657,7 @@ When `gdb-non-stop' is nil, return COMMAND unchanged."
   "`gud-call' wrapper which adds --thread/--all options between
 CMD1 and CMD2.  NOALL is the same as in `gdb-gud-context-command'.
 
-NOARG must be t when this macro is used outside `gud-def'"
+NOARG must be t when this macro is used outside `gud-def'."
   `(gud-call
     (concat (gdb-gud-context-command ,cmd1 ,noall) " " ,cmd2)
     ,(when (not noarg) 'arg)))
@@ -955,6 +955,7 @@ detailed description of this mode.
     (gdb-input "-gdb-set non-stop 1" 'gdb-non-stop-handler))
 
   (gdb-input "-enable-pretty-printing" 'ignore)
+  (gdb-input "-enable-frame-filters" 'ignore)
 
   ;; Find source file and compilation directory here.
   (if gdb-create-source-file-list
@@ -1794,7 +1795,7 @@ commands to be prefixed by \"-interpreter-exec console\".")
   "A comint send filter for gdb."
   (with-current-buffer gud-comint-buffer
     (let ((inhibit-read-only t))
-      (remove-text-properties (point-min) (point-max) '(face))))
+      (remove-text-properties (point-min) (point-max) '(face nil))))
   ;; mimic <RET> key to repeat previous command in GDB
   (when (= gdb-control-level 0)
     (if (not (string= "" string))
@@ -1827,7 +1828,7 @@ commands to be prefixed by \"-interpreter-exec console\".")
 		      " "))
       (setq gdb-first-done-or-error t)
       (let ((to-send (concat "-interpreter-exec console "
-                             (gdb-mi-quote (concat gdb-continuation string " "))
+                             (gdb-mi-quote (concat gdb-continuation string))
                              "\n")))
         (if gdb-enable-debug
             (push (cons 'mi-send to-send) gdb-debug-log))
@@ -2681,7 +2682,7 @@ in MI messages, e.g.: [key=.., key=..].  -stack-list-frames and
 responses.
 
 If FIX-LIST is non-nil, \"FIX-LIST={..}\" is replaced with
-\"FIX-LIST=[..]\" prior to parsing. This is used to fix broken
+\"FIX-LIST=[..]\" prior to parsing.  This is used to fix broken
 -break-info output when it contains breakpoint script field
 incompatible with GDB/MI output syntax.
 
@@ -2714,7 +2715,7 @@ If `default-directory' is remote, full file names are adapted accordingly."
               (insert "]"))))))
     (goto-char (point-min))
     (insert "{")
-    (let ((re (concat "\\([[:alnum:]-_]+\\)=")))
+    (let ((re (concat "\\([[:alnum:]_-]+\\)=")))
       (while (re-search-forward re nil t)
         (replace-match "\"\\1\":" nil nil)
         (if (eq (char-after) ?\") (forward-sexp) (forward-char))))

@@ -127,6 +127,11 @@ the file never exists on disk."
 This information is useful, but it takes screen space away from file names."
   :type 'boolean)
 
+(defcustom tar-copy-preserve-time nil
+  "Non-nil means that Tar mode preserves the timestamp when copying files."
+  :type 'boolean
+  :version "27.1")
+
 (defvar tar-parse-info nil)
 (defvar tar-superior-buffer nil
   "Buffer containing the tar archive from which a member was extracted.")
@@ -450,6 +455,7 @@ checksum before doing the check."
       (progn (beep) (message "Invalid checksum for file %s!" file-name))))
 
 (defun tar-clip-time-string (time)
+  (declare (obsolete format-time-string "27.1"))
   (let ((str (current-time-string time)))
     (concat " " (substring str 4 16) (format-time-string " %Y" time))))
 
@@ -508,7 +514,9 @@ MODE should be an integer which is a file mode value."
 	    (if (= 0 (length uname)) uid uname)
 	    (if (= 0 (length gname)) gid gname)
 	    size
-	    (if tar-mode-show-date (tar-clip-time-string time) "")
+	    (if tar-mode-show-date
+                (format-time-string " %Y-%m-%d %H:%M" time)
+              "")
 	    (propertize name
 			'mouse-face 'highlight
 			'help-echo "mouse-2: extract this file into a buffer")
@@ -998,11 +1006,16 @@ actually appear on disk when you save the tar-file's buffer."
 (defun tar-copy (&optional to-file)
   "In Tar mode, extract this entry of the tar file into a file on disk.
 If TO-FILE is not supplied, it is prompted for, defaulting to the name of
-the current tar-entry."
+the current tar-entry.
+
+If `tar-copy-preserve-time' is non-nil, the original
+timestamp (if present in the tar file) will be used on the
+extracted file."
   (interactive (list (tar-read-file-name)))
   (let* ((descriptor (tar-get-descriptor))
 	 (name (tar-header-name descriptor))
 	 (size (tar-header-size descriptor))
+	 (date (tar-header-date descriptor))
 	 (start (tar-header-data-start descriptor))
 	 (end (+ start size))
 	 (inhibit-file-name-handlers inhibit-file-name-handlers)
@@ -1021,7 +1034,10 @@ the current tar-entry."
 			   inhibit-file-name-handlers))
 		inhibit-file-name-operation 'write-region))
       (let ((coding-system-for-write 'no-conversion))
-	(write-region start end to-file nil nil nil t)))
+	(write-region start end to-file nil nil nil t))
+      (when (and tar-copy-preserve-time
+                 date)
+        (set-file-times to-file date)))
     (message "Copied tar entry %s to %s" name to-file)))
 
 (defun tar-new-entry (filename &optional index)
@@ -1271,7 +1287,7 @@ for this to be permanent."
 
 (defun tar-octal-time (timeval)
   ;; Format a timestamp as 11 octal digits.
-  (format "%011o" (encode-time timeval 'integer)))
+  (format "%011o" (time-convert timeval 'integer)))
 
 (defun tar-subfile-save-buffer ()
   "In tar subfile mode, save this buffer into its parent tar-file buffer.

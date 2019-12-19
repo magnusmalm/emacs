@@ -250,10 +250,11 @@
   "Parse RFC5545 iCalendar in buffer BUF and return an event object.
 
 Return a gnus-icalendar-event object representing the first event
-contained in the invitation. Return nil for calendars without an event entry.
+contained in the invitation.  Return nil for calendars without an
+event entry.
 
 ATTENDEE-NAME-OR-EMAIL is a list of strings that will be matched
-against the event's attendee names and emails. Invitation rsvp
+against the event's attendee names and emails.  Invitation rsvp
 status will be retrieved from the first matching attendee record."
   (let ((ical (with-current-buffer (icalendar--get-unfolded-buffer (get-buffer buf))
                 (goto-char (point-min))
@@ -484,7 +485,7 @@ Return nil for non-recurring EVENT."
         (narrow-to-region (point) (point))
         (insert (gnus-icalendar-event:org-timestamp event)
                 "\n\n"
-                description)
+                (or description "No description"))
         (indent-region (point-min) (point-max) 2)
         (fill-region (point-min) (point-max)))
 
@@ -650,7 +651,7 @@ is searched."
 (defun gnus-icalendar-show-org-agenda (event)
   (let* ((time-delta (time-subtract (gnus-icalendar-event:end-time event)
                                     (gnus-icalendar-event:start-time event)))
-         (duration-days (1+ (floor (encode-time time-delta 'integer) 86400))))
+         (duration-days (1+ (floor (time-convert time-delta 'integer) 86400))))
     (org-agenda-list nil (gnus-icalendar-event:start event) duration-days)))
 
 (cl-defmethod gnus-icalendar-event:sync-to-org ((event gnus-icalendar-event-request) reply-status)
@@ -777,9 +778,8 @@ These will be used to retrieve the RSVP information from ical events."
        ,callback
        keymap ,gnus-mime-button-map
        face ,gnus-article-button-face
-       gnus-data ,data))
-    (widget-convert-button 'link start (point)
-                           :action 'gnus-widget-press-button)))
+       button t
+       gnus-data ,data))))
 
 (defun gnus-icalendar-send-buffer-by-mail (buffer-name subject)
   (let ((message-signature nil))

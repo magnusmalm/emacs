@@ -1296,7 +1296,7 @@ The region will be defined with mark and point."
      t (lambda ()
          (setq track-mouse old-track-mouse)
          (setq auto-hscroll-mode auto-hscroll-mode-saved)
-          (deactivate-mark)
+         (deactivate-mark)
          (pop-mark)))))
 
 (defun mouse--drag-set-mark-and-point (start click click-count)
@@ -1592,7 +1592,7 @@ previous region was just saved to the kill ring).
 
 If this command is called a second consecutive time with the same
 CLICK position, kill the region (or delete it
-if `mouse-drag-copy-region' is non-nil)"
+if `mouse-drag-copy-region' is non-nil)."
   (interactive "e")
   (mouse-minibuffer-check click)
   (let* ((posn     (event-start click))
@@ -1973,7 +1973,7 @@ a large number if you prefer a mixed multitude.  The default is 4."
 (defvar mouse-buffer-menu-mode-groups
   (mapcar (lambda (arg) (cons  (purecopy (car arg)) (purecopy (cdr arg))))
   '(("Info\\|Help\\|Apropos\\|Man" . "Help")
-    ("\\bVM\\b\\|\\bMH\\b\\|Message\\|Mail\\|Group\\|Score\\|Summary\\|Article"
+    ("\\bVM\\b\\|\\bMH\\b\\|Message\\b\\|Mail\\|Group\\|Score\\|Summary\\|Article"
      . "Mail/News")
     ("\\<C\\>" . "C")
     ("ObjC" . "C")
@@ -2467,12 +2467,13 @@ is copied instead of being cut."
 
     (ignore-errors
       (track-mouse
+        (setq track-mouse 'dropping)
         ;; When event was "click" instead of "drag", skip loop.
         (while (progn
                  (setq event (read-key))      ; read-event or read-key
                  (or (mouse-movement-p event)
                      ;; Handle `mouse-autoselect-window'.
-                     (eq (car-safe event) 'select-window)))
+                     (memq (car event) '(select-window switch-frame))))
           ;; Obtain the dragged text in region.  When the loop was
           ;; skipped, value-selection remains nil.
           (unless value-selection
@@ -2733,6 +2734,7 @@ is copied instead of being cut."
 ;; versions.
 (global-set-key [header-line down-mouse-1] 'mouse-drag-header-line)
 (global-set-key [header-line mouse-1] 'mouse-select-window)
+(global-set-key [tab-line mouse-1] 'mouse-select-window)
 ;; (global-set-key [mode-line drag-mouse-1] 'mouse-select-window)
 (global-set-key [mode-line down-mouse-1] 'mouse-drag-mode-line)
 (global-set-key [mode-line mouse-1] 'mouse-select-window)

@@ -38,6 +38,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 
 ;;; Type coercion.
 
@@ -48,6 +49,8 @@ TYPE is a Common Lisp type specifier.
 \n(fn OBJECT TYPE)"
   (cond ((eq type 'list) (if (listp x) x (append x nil)))
 	((eq type 'vector) (if (vectorp x) x (vconcat x)))
+	((eq type 'bool-vector)
+         (if (bool-vector-p x) x (apply #'bool-vector (cl-coerce x 'list))))
 	((eq type 'string) (if (stringp x) x (concat x)))
 	((eq type 'array) (if (arrayp x) x (vconcat x)))
 	((and (eq type 'character) (stringp x) (= (length x) 1)) (aref x 0))
@@ -437,7 +440,7 @@ as an integer unless JUNK-ALLOWED is non-nil."
 ;; Random numbers.
 
 (defun cl--random-time ()
-  (car (encode-time nil t)))
+  (car (time-convert nil t)))
 
 ;;;###autoload (autoload 'cl-random-state-p "cl-extra")
 (cl-defstruct (cl--random-state
@@ -547,26 +550,7 @@ too large if positive or too small if negative)."
               (macroexp-let2 nil new new
 		`(progn (cl-replace ,seq ,new :start1 ,start :end1 ,end)
 			,new)))))
-  (cond ((or (stringp seq) (vectorp seq)) (substring seq start end))
-        ((listp seq)
-         (let (len
-               (errtext (format "Bad bounding indices: %s, %s" start end)))
-           (and end (< end 0) (setq end (+ end (setq len (length seq)))))
-           (if (< start 0) (setq start (+ start (or len (setq len (length seq))))))
-           (unless (>= start 0)
-             (error "%s" errtext))
-           (when (> start 0)
-             (setq seq (nthcdr (1- start) seq))
-             (or seq (error "%s" errtext))
-             (setq seq (cdr seq)))
-           (if end
-               (let ((res nil))
-                 (while (and (>= (setq end (1- end)) start) seq)
-                   (push (pop seq) res))
-                 (or (= (1+ end) start) (error "%s" errtext))
-                 (nreverse res))
-             (copy-sequence seq))))
-        (t (error "Unsupported sequence: %s" seq))))
+  (seq-subseq seq start end))
 
 ;;;###autoload
 (defun cl-concatenate (type &rest sequences)

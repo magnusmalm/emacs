@@ -77,7 +77,7 @@ along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
 	composition, the elements are characters or encoded
 	composition rules.
 
-   MODIFICATION-FUNC -- If non nil, it is a function to call when the
+   MODIFICATION-FUNC -- If non-nil, it is a function to call when the
 	composition gets invalid after a modification in a buffer.  If
 	it is nil, a function in `composition-function-table' of the
 	first character in the sequence is called.
@@ -164,11 +164,10 @@ ptrdiff_t
 get_composition_id (ptrdiff_t charpos, ptrdiff_t bytepos, ptrdiff_t nchars,
 		    Lisp_Object prop, Lisp_Object string)
 {
-  Lisp_Object id, length, components, key, *key_contents;
+  Lisp_Object id, length, components, key, *key_contents, hash_code;
   ptrdiff_t glyph_len;
   struct Lisp_Hash_Table *hash_table = XHASH_TABLE (composition_hash_table);
   ptrdiff_t hash_index;
-  EMACS_UINT hash_code;
   enum composition_method method;
   struct composition *cmp;
   ptrdiff_t i;
@@ -656,7 +655,7 @@ composition_gstring_put_cache (Lisp_Object gstring, ptrdiff_t len)
   struct Lisp_Hash_Table *h = XHASH_TABLE (gstring_hash_table);
   hash_rehash_if_needed (h);
   Lisp_Object header = LGSTRING_HEADER (gstring);
-  EMACS_UINT hash = h->test.hashfn (&h->test, header);
+  Lisp_Object hash = h->test.hashfn (header, h);
   if (len < 0)
     {
       ptrdiff_t glyph_len = LGSTRING_GLYPH_LEN (gstring);
@@ -920,16 +919,17 @@ autocmp_chars (Lisp_Object rule, ptrdiff_t charpos, ptrdiff_t bytepos,
 }
 
 /* 1 iff the character C is composable.  Characters of general
-   category Z? or C? are not composable except for ZWNJ and ZWJ. */
+   category Z? or C? are not composable except for ZWNJ and ZWJ,
+   and characters of category Zs. */
 
 static bool
 char_composable_p (int c)
 {
   Lisp_Object val;
-  return (c > ' '
+  return (c >= ' '
 	  && (c == ZERO_WIDTH_NON_JOINER || c == ZERO_WIDTH_JOINER
 	      || (val = CHAR_TABLE_REF (Vunicode_category_table, c),
-		  (FIXNUMP (val) && (XFIXNUM (val) <= UNICODE_CATEGORY_So)))));
+		  (FIXNUMP (val) && (XFIXNUM (val) <= UNICODE_CATEGORY_Zs)))));
 }
 
 /* Update cmp_it->stop_pos to the next position after CHARPOS (and

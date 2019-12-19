@@ -318,7 +318,7 @@ want to set `Info-refill-paragraphs'."
 	 (set sym val)
 	 (dolist (buffer (buffer-list))
 	   (with-current-buffer buffer
-	     (when (eq major-mode 'Info-mode)
+             (when (derived-mode-p 'Info-mode)
 	       (revert-buffer t t)))))
   :group 'info)
 
@@ -841,7 +841,7 @@ See a list of available Info commands in `Info-mode'."
 (defun info-standalone ()
   "Run Emacs as a standalone Info reader.
 Usage:  emacs -f info-standalone [filename]
-In standalone mode, \\<Info-mode-map>\\[Info-exit] exits Emacs itself."
+In standalone mode, \\<Info-mode-map>\\[quit-window] exits Emacs itself."
   (setq Info-standalone t)
   (if (and command-line-args-left
 	   (not (string-match "^-" (car command-line-args-left))))
@@ -882,6 +882,7 @@ just return nil (no error).
 
 If NO-POP-TO-DIR, don't try to pop to the info buffer if we can't
 find a node."
+  (info-initialize)
   ;; Convert filename to lower case if not found as specified.
   ;; Expand it.
   (cond
@@ -2452,11 +2453,12 @@ Table of contents is created from the tree structure of menus."
   "Insert table of contents with references to nodes."
   (let ((section "Top"))
     (while nodes
-      (let ((node (assoc (car nodes) node-list)))
-        (unless (member (nth 2 node) (list nil section))
-          (insert (setq section (nth 2 node)) "\n"))
-        (insert (make-string level ?\t))
-        (insert "*Note " (car nodes) ":: \n")
+      (let ((node (assoc (car nodes) node-list))
+            (indentation (make-string level ?\t)))
+        (when (and (not (member (nth 2 node) (list nil section)))
+                   (not (equal (nth 1 node) (nth 2 node))))
+          (insert indentation (setq section (nth 2 node)) "\n"))
+        (insert indentation "*Note " (car nodes) ":: \n")
         (Info-toc-insert (nth 3 node) node-list (1+ level) curr-file)
         (setq nodes (cdr nodes))))))
 
@@ -2946,12 +2948,7 @@ N is the digit argument used to invoke this command."
 	  (t
 	   (user-error "No pointer backward from this node")))))
 
-(defun Info-exit ()
-  "Exit Info by selecting some other buffer."
-  (interactive)
-  (if Info-standalone
-      (save-buffers-kill-emacs)
-    (quit-window)))
+(define-obsolete-function-alias 'Info-exit #'quit-window "27.1")
 
 (defun Info-next-menu-item ()
   "Go to the node of the next menu item."
@@ -4043,7 +4040,7 @@ If FORK is non-nil, it is passed to `Info-goto-node'."
     (define-key map "m" 'Info-menu)
     (define-key map "n" 'Info-next)
     (define-key map "p" 'Info-prev)
-    (define-key map "q" 'Info-exit)
+    (define-key map "q" 'quit-window)
     (define-key map "r" 'Info-history-forward)
     (define-key map "s" 'Info-search)
     (define-key map "S" 'Info-search-case-sensitively)
@@ -4062,6 +4059,8 @@ If FORK is non-nil, it is passed to `Info-goto-node'."
     (define-key map [follow-link] 'mouse-face)
     (define-key map [XF86Back] 'Info-history-back)
     (define-key map [XF86Forward] 'Info-history-forward)
+    (define-key map [tool-bar C-Back\ in\ history] 'Info-history-back-menu)
+    (define-key map [tool-bar C-Forward\ in\ history] 'Info-history-forward-menu)
     map)
   "Keymap containing Info commands.")
 
@@ -4121,7 +4120,7 @@ If FORK is non-nil, it is passed to `Info-goto-node'."
     :help "Copy the name of the current node into the kill ring"]
    ["Clone Info buffer" clone-buffer
     :help "Create a twin copy of the current Info buffer."]
-   ["Exit" Info-exit :help "Stop reading Info"]))
+   ["Exit" quit-window :help "Stop reading Info"]))
 
 
 (defvar info-tool-bar-map
@@ -4150,9 +4149,39 @@ If FORK is non-nil, it is passed to `Info-goto-node'."
 				   :label "Index")
     (tool-bar-local-item-from-menu 'Info-search "search" map Info-mode-map
 				   :vert-only t)
-    (tool-bar-local-item-from-menu 'Info-exit "exit" map Info-mode-map
+    (tool-bar-local-item-from-menu 'quit-window "exit" map Info-mode-map
 				   :vert-only t)
     map))
+
+(defun Info-history-menu (e name history command)
+  (let* ((i (length history))
+         (map (make-sparse-keymap name)))
+    (mapc (lambda (history)
+            (let ((file (nth 0 history))
+                  (node (nth 1 history)))
+              (when (stringp file)
+                (setq file (file-name-sans-extension
+                            (file-name-nondirectory file))))
+              (define-key map (vector (intern (format "history-%i" i)))
+                `(menu-item ,(format "(%s) %s" file node)
+                            (lambda ()
+                              (interactive)
+                              (dotimes (_ ,i) (call-interactively ',command))))))
+            (setq i (1- i)))
+          (reverse history))
+    (let* ((selection (x-popup-menu e map))
+           (binding (and selection (lookup-key map (vector (car selection))))))
+      (if binding (call-interactively binding)))))
+
+(defun Info-history-back-menu (e)
+  "Pop up the menu with a list of previously visited Info nodes."
+  (interactive "e")
+  (Info-history-menu e "Back in history" Info-history 'Info-history-back))
+
+(defun Info-history-forward-menu (e)
+  "Pop up the menu with a list of Info nodes visited with ‘Info-history-back’."
+  (interactive "e")
+  (Info-history-menu e "Forward in history" Info-history-forward 'Info-history-forward))
 
 (defvar Info-menu-last-node nil)
 ;; Last node the menu was created for.
@@ -4268,6 +4297,33 @@ With a zero prefix arg, put the name inside a function call to `info'."
 (defvar Info-mode-font-lock-keywords
   '(("‘\\([‘’]\\|[^‘’]*\\)’" (1 'Info-quoted))))
 
+;; See info-utils.c:degrade_utf8 in Texinfo for the source of the list
+;; below.
+(defvar info-symbols-and-replacements
+  '((?\‘ . "`")
+    (?\’ . "'")
+    (?\“ . "\"")
+    (?\” . "\"")
+    (?© . "(C)")
+    (?\》 . ">>")
+    (?→ . "->")
+    (?⇒ . "=>")
+    (?⊣ . "-|")
+    (?★ . "-!-")
+    (?↦ . "==>")
+    (?‐ . "-")
+    (?‑ . "-")
+    (?‒ . "-")
+    (?– . "-")
+    (?— . "--")
+    (?− . "-")
+    (?… . "...")
+    (?• . "*")
+    )
+  "A list of Unicode symbols used in Info files and their ASCII translations.
+Each element should be a cons cell with its car a character and its cdr
+a string of ASCII characters.")
+
 ;; Autoload cookie needed by desktop.el
 ;;;###autoload
 (define-derived-mode Info-mode nil "Info" ;FIXME: Derive from special-mode?
@@ -4278,7 +4334,7 @@ topics.  Info has commands to follow the references and show you other nodes.
 
 \\<Info-mode-map>\
 \\[Info-help]	Invoke the Info tutorial.
-\\[Info-exit]	Quit Info: reselect previously selected buffer.
+\\[quit-window]	Quit Info: reselect previously selected buffer.
 
 Selecting other nodes:
 \\[Info-mouse-follow-nearest-node]
@@ -4339,6 +4395,20 @@ Advanced commands:
   (setq case-fold-search t)
   (setq buffer-read-only t)
   (setq Info-tag-table-marker (make-marker))
+  (unless (or (display-multi-font-p)
+              (coding-system-equal
+               (coding-system-base (terminal-coding-system))
+               'utf-8))
+    (dolist (elt info-symbols-and-replacements)
+      (let ((ch (car elt))
+            (repl (cdr elt)))
+        (or (char-displayable-p ch)
+            (aset (or buffer-display-table
+                      (setq buffer-display-table (make-display-table)))
+                  ch (vconcat (mapcar (lambda (c)
+                                        (make-glyph-code c 'homoglyph))
+                                      repl)))))))
+
   (if Info-use-header-line    ; do not override global header lines
       (setq header-line-format
  	    '(:eval (get-text-property (point-min) 'header-line))))
@@ -4351,6 +4421,8 @@ Advanced commands:
   (add-hook 'clone-buffer-hook 'Info-clone-buffer nil t)
   (add-hook 'change-major-mode-hook 'font-lock-defontify nil t)
   (add-hook 'isearch-mode-hook 'Info-isearch-start nil t)
+  (when Info-standalone
+    (add-hook 'quit-window-hook 'save-buffers-kill-emacs nil t))
   (setq-local isearch-search-fun-function #'Info-isearch-search)
   (setq-local isearch-wrap-function #'Info-isearch-wrap)
   (setq-local isearch-push-state-function #'Info-isearch-push-state)
@@ -5301,13 +5373,22 @@ completion alternatives to currently visited manuals."
 	found)
     (dolist (buffer blist)
       (with-current-buffer buffer
-	(when (and (eq major-mode 'Info-mode)
+        (when (and (derived-mode-p 'Info-mode)
 		   (stringp Info-current-file)
 		   (string-match manual-re Info-current-file))
 	  (setq found buffer
 		blist nil))))
     (if found
-	(switch-to-buffer found)
+        (let ((window (get-buffer-window found t)))
+          ;; If the buffer is already displayed in a window somewhere,
+          ;; then select that window (and pop its frame to the top).
+          (if window
+              (progn
+                (raise-frame (window-frame window))
+                (select-frame-set-input-focus (window-frame window))
+                (select-window window))
+	    (switch-to-buffer found)))
+      ;; The buffer doesn't exist; create it.
       (info-initialize)
       (info (Info-find-file manual)
 	    (generate-new-buffer-name "*info*")))))
@@ -5316,7 +5397,7 @@ completion alternatives to currently visited manuals."
   (let (names)
     (dolist (buffer (buffer-list))
       (with-current-buffer buffer
-	(and (eq major-mode 'Info-mode)
+        (and (derived-mode-p 'Info-mode)
 	     (stringp Info-current-file)
 	     (not (string= (substring (buffer-name) 0 1) " "))
 	     (push (file-name-sans-extension

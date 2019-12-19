@@ -556,14 +556,14 @@ Font Lock mode.
 
 @node Colors
 @section Colors for Faces
-@cindex color name
-@cindex RGB triplet
 
   Faces can have various foreground and background colors.  When you
 specify a color for a face---for instance, when customizing the face
 (@pxref{Face Customization})---you can use either a @dfn{color name}
 or an @dfn{RGB triplet}.
 
+@subsection Color Names
+@cindex color name
 @findex list-colors-display
 @vindex list-colors-sort
   A color name is a pre-defined name, such as @samp{dark orange} or
@@ -578,12 +578,16 @@ such terminals.  However, Emacs understands X11 color names even on
 text terminals; if a face is given a color specified by an X11 color
 name, it is displayed using the closest-matching terminal color.
 
+@subsection RGB Triplets
+@cindex RGB triplet
   An RGB triplet is a string of the form @samp{#RRGGBB}.  Each of the
-R, G, and B components is a hexadecimal number specifying the
-component's relative intensity, one to four digits long (usually two
-digits are used).  The components must have the same number of digits.
-For hexadecimal values A to F, either upper or lower case are
-acceptable.
+primary color components is represented by a hexadecimal number
+between @samp{00} (intensity 0) and @samp{FF} (the maximum intensity).
+It is also possible to use one, three, or four hex digits for each
+component, so @samp{red} can be represented as @samp{#F00},
+@samp{#fff000000}, or @samp{#ffff00000000}.  The components must have
+the same number of digits.  For hexadecimal values A to F, either
+upper or lower case are acceptable.
 
   The @kbd{M-x list-colors-display} command also shows the equivalent
 RGB triplet for each named color.  For instance, @samp{medium sea
@@ -718,6 +722,10 @@ Similar to @code{highlight} and @code{mode-line-highlight}, but used
 for mouse-sensitive portions of text on header lines.  This is a
 separate face because the @code{header-line} face might be customized
 in a way that does not interact well with @code{highlight}.
+@item tab-line
+@cindex @code{tab-line} face
+Similar to @code{mode-line} for a window's tab line, which appears
+at the top of a window with tabs representing window buffers.
 @item vertical-border
 @cindex @code{vertical-border} face
 This face is used for the vertical divider between windows on text
@@ -759,6 +767,8 @@ This face determines the visual appearance of the scroll bar.
 @xref{Scroll Bars}.
 @item tool-bar
 This face determines the color of tool bar icons.  @xref{Tool Bars}.
+@item tab-bar
+This face determines the color of tab bar icons.  @xref{Tab Bars}.
 @item menu
 @cindex menu bar appearance
 @cindex @code{menu} face, no effect if customized
@@ -1112,7 +1122,8 @@ the arrows scrolls the display horizontally in the direction of the
 arrow.
 
   The fringes can also indicate other things, such as buffer
-boundaries (@pxref{Displaying Boundaries}), and where a program you
+boundaries (@pxref{Displaying Boundaries}), unused lines near the end
+of the window (@pxref{indicate-empty-lines}), and where a program you
 are debugging is executing (@pxref{Debuggers}).
 
 @vindex overflow-newline-into-fringe
@@ -1254,6 +1265,7 @@ extra spaces at the end of each line in the region.
 @vindex indicate-empty-lines
 @cindex unused lines
 @cindex fringes, and unused line indication
+@anchor{indicate-empty-lines}
   On graphical displays, Emacs can indicate unused lines at the end of
 the window with a small image in the left fringe (@pxref{Fringes}).
 The image appears for screen lines that do not correspond to any
@@ -1843,6 +1855,13 @@ the variable @code{display-line-numbers-widen} to a non-@code{nil}
 value, line numbers will disregard any narrowing and will start at the
 first character of the buffer.
 
+@vindex display-line-numbers-offset
+If the value of @code{display-line-numbers-offset} is non-zero, it is
+added to each absolute line number, and lines are counted from the
+beginning of the buffer, as if @code{display-line-numbers-widen} were
+non-@code{nil}.  It has no effect when set to zero, or when line
+numbers are not absolute.
+
 @vindex display-line-numbers-width-start
 @vindex display-line-numbers-grow-only
 @vindex display-line-numbers-width
@@ -1859,7 +1878,12 @@ The line numbers are displayed in a special face @code{line-number}.
 The current line number is displayed in a different face,
 @code{line-number-current-line}, so you can make the current line's
 number have a distinct appearance, which will help locating the line
-showing point.
+showing point. Additional faces @code{line-number-major-tick} and
+@code{line-number-minor-tick} can be used to highlight the line numbers
+of lines which are a multiple of certain numbers.  Customize
+@code{display-line-numbers-major-tick} and
+@code{display-line-numbers-minor-tick} respectively to set those
+numbers.
 
 @vindex visible-bell
   If the variable @code{visible-bell} is non-@code{nil}, Emacs attempts

@@ -471,6 +471,7 @@ It has been changed in GVFS 1.14.")
     ("gvfs-mount" . "mount")
     ("gvfs-move" . "move")
     ("gvfs-rm" . "remove")
+    ("gvfs-set-attribute" . "set")
     ("gvfs-trash" . "trash"))
   "List of cons cells, mapping \"gvfs-<command>\" to \"gio <command>\".")
 
@@ -480,6 +481,7 @@ It has been changed in GVFS 1.14.")
     "type"
     "standard::display-name"
     "standard::symlink-target"
+    "standard::is-volatile"
     "unix::nlink"
     "unix::uid"
     "owner::user"
@@ -590,15 +592,15 @@ It has been changed in GVFS 1.14.")
     (process-file . ignore)
     (rename-file . tramp-gvfs-handle-rename-file)
     (set-file-acl . ignore)
-    (set-file-modes . ignore)
+    (set-file-modes . tramp-gvfs-handle-set-file-modes)
     (set-file-selinux-context . ignore)
-    (set-file-times . ignore)
+    (set-file-times . tramp-gvfs-handle-set-file-times)
     (set-visited-file-modtime . tramp-handle-set-visited-file-modtime)
     (shell-command . ignore)
     (start-file-process . ignore)
     (substitute-in-file-name . tramp-handle-substitute-in-file-name)
     (temporary-file-directory . tramp-handle-temporary-file-directory)
-    (tramp-set-file-uid-gid . ignore)
+    (tramp-set-file-uid-gid . tramp-gvfs-handle-set-file-uid-gid)
     (unhandled-file-name-directory . ignore)
     (vc-registered . ignore)
     (verify-visited-file-modtime . tramp-handle-verify-visited-file-modtime)
@@ -765,7 +767,8 @@ file names."
       (with-parsed-tramp-file-name (if t1 filename newname) nil
 	(when (and (not ok-if-already-exists) (file-exists-p newname))
 	  (tramp-error v 'file-already-exists newname))
-	(when (and (file-directory-p newname) (not (directory-name-p newname)))
+	(when (and (file-directory-p newname)
+		   (not (tramp-compat-directory-name-p newname)))
 	  (tramp-error v 'file-error "File is a directory %s" newname))
 
 	(if (or (and equal-remote
@@ -816,12 +819,10 @@ file names."
 
 	  (when (and t1 (eq op 'rename))
 	    (with-parsed-tramp-file-name filename nil
-	      (tramp-flush-file-properties v (file-name-directory localname))
 	      (tramp-flush-file-properties v localname)))
 
 	  (when t2
 	    (with-parsed-tramp-file-name newname nil
-	      (tramp-flush-file-properties v (file-name-directory localname))
 	      (tramp-flush-file-properties v localname))))))))
 
 (defun tramp-gvfs-handle-copy-file
@@ -856,7 +857,6 @@ file names."
 	(tramp-error
 	 v 'file-error "Couldn't delete non-empty %s" directory)))
 
-    (tramp-flush-file-properties v (file-name-directory localname))
     (tramp-flush-directory-properties v localname)
     (unless
 	(tramp-gvfs-send-command
@@ -871,7 +871,6 @@ file names."
 (defun tramp-gvfs-handle-delete-file (filename &optional trash)
   "Like `delete-file' for Tramp files."
   (with-parsed-tramp-file-name filename nil
-    (tramp-flush-file-properties v (file-name-directory localname))
     (tramp-flush-file-properties v localname)
     (unless
 	(tramp-gvfs-send-command
@@ -939,8 +938,9 @@ file names."
 	(tramp-message v 5 "directory gvfs attributes: %s" localname)
 	;; Send command.
 	(tramp-gvfs-send-command
-	 v "gvfs-ls" "-h" "-n" "-a"
-	 (string-join tramp-gvfs-file-attributes ",")
+	 v "gvfs-ls" "-h"
+	 (unless (string-equal (file-remote-p directory 'method) "gdrive") "-n")
+	 "-a" (string-join tramp-gvfs-file-attributes ",")
 	 (tramp-gvfs-url-file-name directory))
 	;; Parse output.
 	(with-current-buffer (tramp-get-connection-buffer v)
@@ -1023,7 +1023,12 @@ If FILE-SYSTEM is non-nil, return file system attributes."
       ;; ... directory or symlink
       (setq dirp (if (equal "directory" (cdr (assoc "type" attributes))) t))
       (setq res-symlink-target
-	    (cdr (assoc "standard::symlink-target" attributes)))
+	    ;; Google-drive creates file blobs and links to them.  We
+	    ;; don't want to see them.
+	    (and
+	     (not
+	      (equal (cdr (assoc "standard::is-volatile" attributes)) "TRUE"))
+	     (cdr (assoc "standard::symlink-target" attributes))))
       (when (stringp res-symlink-target)
 	(setq res-symlink-target
 	      ;; Parse unibyte codes "\xNN".  We assume they are
@@ -1263,6 +1268,12 @@ file-notify events."
     (with-tramp-file-property v localname "file-readable-p"
       (and (file-exists-p filename)
 	   (or (tramp-check-cached-permissions v ?r)
+	       ;; `tramp-check-cached-permissions' doesn't handle
+	       ;; symbolic links.
+	       (and (stringp (file-symlink-p filename))
+		    (file-readable-p
+		     (concat
+		      (file-remote-p filename) (file-symlink-p filename))))
 	       ;; If the user is different from what we guess to be
 	       ;; the user, we don't know.  Let's check, whether
 	       ;; access is restricted explicitly.
@@ -1295,7 +1306,6 @@ file-notify events."
   "Like `make-directory' for Tramp files."
   (setq dir (directory-file-name (expand-file-name dir)))
   (with-parsed-tramp-file-name dir nil
-    (tramp-flush-file-properties v (file-name-directory localname))
     (tramp-flush-directory-properties v localname)
     (save-match-data
       (let ((ldir (file-name-directory dir)))
@@ -1324,6 +1334,45 @@ file-notify events."
        'keep-date 'preserve-uid-gid)
     (tramp-run-real-handler
      #'rename-file (list filename newname ok-if-already-exists))))
+
+(defun tramp-gvfs-handle-set-file-modes (filename mode)
+  "Like `set-file-modes' for Tramp files."
+  (with-parsed-tramp-file-name filename nil
+    (tramp-flush-file-properties v localname)
+    (tramp-gvfs-send-command
+     v "gvfs-set-attribute" "-t" "uint32"
+     (tramp-gvfs-url-file-name (tramp-make-tramp-file-name v))
+     "unix::mode" (number-to-string mode))))
+
+(defun tramp-gvfs-handle-set-file-times (filename &optional time)
+  "Like `set-file-times' for Tramp files."
+  (with-parsed-tramp-file-name filename nil
+    (tramp-flush-file-properties v localname)
+    (let ((time
+	   (if (or (null time)
+		   (tramp-compat-time-equal-p time tramp-time-doesnt-exist)
+		   (tramp-compat-time-equal-p time tramp-time-dont-know))
+	       (current-time)
+	     time)))
+      (tramp-gvfs-send-command
+       v "gvfs-set-attribute" "-t" "uint64"
+       (tramp-gvfs-url-file-name (tramp-make-tramp-file-name v))
+       "time::modified" (format-time-string "%s" time)))))
+
+(defun tramp-gvfs-set-file-uid-gid (filename &optional uid gid)
+  "Like `tramp-set-file-uid-gid' for Tramp files."
+  (with-parsed-tramp-file-name filename nil
+    (tramp-flush-file-properties v localname)
+    (when (natnump uid)
+      (tramp-gvfs-send-command
+       v "gvfs-set-attribute" "-t" "uint32"
+       (tramp-gvfs-url-file-name (tramp-make-tramp-file-name v))
+       "unix::uid" (number-to-string uid)))
+    (when (natnump gid)
+      (tramp-gvfs-send-command
+       v "gvfs-set-attribute" "-t" "uint32"
+       (tramp-gvfs-url-file-name (tramp-make-tramp-file-name v))
+       "unix::gid" (number-to-string gid)))))
 
 
 ;; File name conversions.
@@ -1745,6 +1794,10 @@ This is relevant for GNOME Online Accounts."
   "Maybe open a connection VEC.
 Does not do anything if a connection is already open, but re-opens the
 connection if a previous connection has died for some reason."
+  ;; During completion, don't reopen a new connection.
+  (unless (tramp-connectable-p vec)
+    (throw 'non-essential 'non-essential))
+
   ;; We set the file name, in case there are incoming D-Bus signals or
   ;; D-Bus errors.
   (setq tramp-gvfs-dbus-event-vector vec)
@@ -1858,7 +1911,9 @@ connection if a previous connection has died for some reason."
 	  (tramp-error vec 'file-error "FUSE mount denied"))
 
 	;; Save the password.
-	(ignore-errors (funcall tramp-password-save-function))
+	(ignore-errors
+	  (and (functionp tramp-password-save-function)
+	       (funcall tramp-password-save-function)))
 
 	;; Set connection-local variables.
 	(tramp-set-connection-local-variables vec)
@@ -1895,7 +1950,8 @@ is applied, and it returns t if the return code is zero."
 	   process-environment)))
     (when (tramp-gvfs-gio-tool-p vec)
       ;; Use gio tool.
-      (setq args (cons (cdr (assoc command tramp-gvfs-gio-mapping)) args)
+      (setq args (cons (cdr (assoc command tramp-gvfs-gio-mapping))
+		       (delq nil args))
 	    command "gio"))
 
     (with-current-buffer (tramp-get-connection-buffer vec)

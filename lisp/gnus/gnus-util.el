@@ -357,22 +357,28 @@ Symbols are also allowed; their print names are used instead."
 ;; the full date if it's older)
 
 (defun gnus-seconds-today ()
-  "Return the number of seconds passed today."
-  (let ((now (decode-time)))
-    (+ (car now) (* (car (cdr now)) 60) (* (car (nthcdr 2 now)) 3600))))
+  "Return the integer number of seconds passed today."
+  (let ((now (decode-time nil nil 'integer)))
+    (+ (decoded-time-second now)
+       (* (decoded-time-minute now) 60)
+       (* (decoded-time-hour now) 3600))))
 
 (defun gnus-seconds-month ()
-  "Return the number of seconds passed this month."
-  (let ((now (decode-time)))
-    (+ (car now) (* (car (cdr now)) 60) (* (car (nthcdr 2 now)) 3600)
-       (* (- (car (nthcdr 3 now)) 1) 3600 24))))
+  "Return the integer number of seconds passed this month."
+  (let ((now (decode-time nil nil 'integer)))
+    (+ (decoded-time-second now)
+       (* (decoded-time-minute now) 60)
+       (* (decoded-time-hour now) 3600)
+       (* (- (decoded-time-day now) 1) 3600 24))))
 
 (defun gnus-seconds-year ()
-  "Return the number of seconds passed this year."
+  "Return the integer number of seconds passed this year."
   (let* ((current (current-time))
-	 (now (decode-time current))
+	 (now (decode-time current nil 'integer))
 	 (days (format-time-string "%j" current)))
-    (+ (car now) (* (car (cdr now)) 60) (* (car (nthcdr 2 now)) 3600)
+    (+ (decoded-time-second now)
+       (* (decoded-time-minute now) 60)
+       (* (decoded-time-hour now) 3600)
        (* (- (string-to-number days) 1) 3600 24))))
 
 (defmacro gnus-date-get-time (date)
@@ -1167,16 +1173,9 @@ ARG is passed to the first function."
   "Return non-nil if all ELEMENTS are non-nil."
   (not (memq nil elements)))
 
-;; gnus.el requires mm-util.
-(declare-function mm-disable-multibyte "mm-util")
-
 (defun gnus-write-active-file (file hashtb &optional full-names)
-  ;; `coding-system-for-write' should be `raw-text' or equivalent.
   (let ((coding-system-for-write nnmail-active-file-coding-system))
     (with-temp-file file
-      ;; The buffer should be in the unibyte mode because group names
-      ;; are ASCII text or encoded non-ASCII text (i.e., unibyte).
-      (mm-disable-multibyte)
       (maphash
        (lambda (group active)
 	 (when active
@@ -1607,25 +1606,20 @@ empty directories from OLD-PATH."
   (ignore-errors
     (set-file-modes filename mode)))
 
-(declare-function image-size "image.c" (spec &optional pixels frame))
-
 (defun gnus-rescale-image (image size)
   "Rescale IMAGE to SIZE if possible.
-SIZE is in format (WIDTH . HEIGHT). Return a new image.
+SIZE is in format (WIDTH . HEIGHT).  Return a new image.
 Sizes are in pixels."
-  (if (not (fboundp 'imagemagick-types))
+  (if (not (display-graphic-p))
       image
     (let ((new-width (car size))
           (new-height (cdr size)))
       (when (> (cdr (image-size image t)) new-height)
-        (setq image (or (create-image (plist-get (cdr image) :data) 'imagemagick t
-                                      :height new-height)
-                        image)))
+	(setq image (create-image (plist-get (cdr image) :data) nil t
+                                  :max-height new-height)))
       (when (> (car (image-size image t)) new-width)
-        (setq image (or
-                   (create-image (plist-get (cdr image) :data) 'imagemagick t
-                                 :width new-width)
-                   image)))
+	(setq image (create-image (plist-get (cdr image) :data) nil t
+                                  :max-width new-width)))
       image)))
 
 (defun gnus-recursive-directory-files (dir)

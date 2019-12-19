@@ -383,8 +383,8 @@ own View-like bindings."
   "Toggle View mode, a minor mode for viewing text but not editing it.
 
 When View mode is enabled, commands that do not change the buffer
-contents are available as usual.  Kill commands insert text in
-kill buffers but do not delete.  Most other commands beep and
+contents are available as usual.  Kill commands save text but
+do not delete it from the buffer.  Most other commands beep and
 tell the user that the buffer is read-only.
 
 \\<view-mode-map>
@@ -581,7 +581,7 @@ the associations of any windows with the current buffer.
 EXIT-ACTION, if non-nil, must specify a function that is called
 with the current buffer as argument and is called after disabling
 `view-mode' and removing any associations of windows with the
-current buffer. "
+current buffer."
   (when view-mode
     (let ((buffer (window-buffer)))
       (unless view-no-disable-on-exit

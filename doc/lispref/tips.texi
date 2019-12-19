@@ -158,7 +158,10 @@ If the purpose of a function is to tell you whether a certain
 condition is true or false, give the function a name that ends in
 @samp{p} (which stands for ``predicate'').  If the name is one word,
 add just @samp{p}; if the name is multiple words, add @samp{-p}.
-Examples are @code{framep} and @code{frame-live-p}.
+Examples are @code{framep} and @code{frame-live-p}.  We recommend to
+avoid using this @code{-p} suffix in boolean variable names, unless
+the variable is bound to a predicate function; instead, use a
+@code{-flag} suffix or names like @code{is-foo}.
 
 @item
 If the purpose of a variable is to store a single function, give it a
@@ -916,13 +919,16 @@ is discouraged.
 When commenting out entire functions, use two semicolons.
 
 @item ;;;;
-Comments that start with four semicolons, @samp{;;;;}, should be aligned
-to the left margin and are used for headings of major sections of a
-program.  For example:
+Comments that start with four (or more) semicolons, @samp{;;;;},
+should be aligned to the left margin and are used for headings of
+major sections of a program.  For example:
 
 @smallexample
 ;;;; The kill ring
 @end smallexample
+
+If you wish to have sub-headings under these heading, use more
+semicolons to nest these sub-headings.
 @end table
 
 @noindent
@@ -955,7 +961,7 @@ explains these conventions, starting with an example:
 ;; Created: 14 Jul 2010
 @group
 ;; Keywords: languages
-;; Homepage: http://example.com/foo
+;; URL: https://example.com/foo
 
 ;; This file is not part of GNU Emacs.
 

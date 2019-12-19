@@ -21,10 +21,9 @@
 
 ;;; Commentary:
 
-;; Maildir format is documented at <URL:http://cr.yp.to/proto/maildir.html>
-;; and in the maildir(5) man page from qmail (available at
-;; <URL:http://www.qmail.org/man/man5/maildir.html>).  nnmaildir also stores
-;; extra information in the .nnmaildir/ directory within a maildir.
+;; Maildir format is documented at <URL:http://cr.yp.to/proto/maildir.html>.
+;; nnmaildir also stores extra information in the .nnmaildir/ directory
+;; within a maildir.
 ;;
 ;; Some goals of nnmaildir:
 ;; * Everything Just Works, and correctly.  E.g., NOV data is automatically
@@ -322,8 +321,6 @@ This variable is set by `nnmaildir-request-article'.")
 	(setq ino-opened (file-attribute-inode-number attr)
 	      nlink (file-attribute-link-number attr)
 	      number-linked (+ number-opened nlink))
-	(if (or (< nlink 1) (< number-linked nlink))
-	    (signal 'error '("Arithmetic overflow")))
 	(setq attr (file-attributes
 		    (concat dir (number-to-string number-linked))))
 	(or attr (throw 'return (1- number-linked)))
@@ -395,9 +392,7 @@ This variable is set by `nnmaildir-request-article'.")
 	(let* ((attr (file-attributes path-open))
 	       (nlink (file-attribute-link-number attr)))
 	  (setq ino-open (file-attribute-inode-number attr)
-		number-link (+ number-open nlink))
-	  (if (or (< nlink 1) (< number-link nlink))
-	      (signal 'error '("Arithmetic overflow"))))
+		number-link (+ number-open nlink)))
 	(if (= number-link previous-number-link)
 	    ;; We've already tried this number, in the previous loop iteration,
 	    ;; and failed.
@@ -419,7 +414,7 @@ This variable is set by `nnmaildir-request-article'.")
 	   (t (signal (car err) (cdr err)))))))))
 
 (defun nnmaildir--update-nov (server group article)
-  (let ((nnheader-file-coding-system 'binary)
+  (let ((nnheader-file-coding-system 'undecided)
 	(srv-dir (nnmaildir--srv-dir server))
 	(storage-version 1) ;; [version article-number msgid [...nov...]]
 	dir gname pgname msgdir prefix suffix file attr mtime novdir novfile
@@ -1759,7 +1754,7 @@ This variable is set by `nnmaildir-request-article'.")
 	    (delete-file file))))
       t)))
 
-(defun nnmaildir-close-server (&optional server)
+(defun nnmaildir-close-server (&optional server _defs)
   "Close SERVER, or the current maildir server."
   (when (nnmaildir--prepare server nil)
     (setq server nnmaildir--cur-server

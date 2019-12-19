@@ -245,7 +245,7 @@ Instead, each hi-lock command will cycle through the faces in
                                 "23.1")
 
 (defvar hi-lock-file-patterns-prefix "Hi-lock"
-  "Search target for finding hi-lock patterns at top of file.")
+  "String used to identify hi-lock patterns at the start of files.")
 
 (defvar hi-lock-archaic-interface-message-used nil
   "True if user alerted that `global-hi-lock-mode' is now the global switch.
@@ -447,7 +447,7 @@ highlighting will not update as you type."
   (hi-lock-set-pattern
    ;; The \\(?:...\\) grouping construct ensures that a leading ^, +, * or ?
    ;; or a trailing $ in REGEXP will be interpreted correctly.
-   (concat "^.*\\(?:" regexp "\\).*$") face))
+   (concat "^.*\\(?:" regexp "\\).*\\(?:$\\)\n?") face))
 
 
 ;;;###autoload

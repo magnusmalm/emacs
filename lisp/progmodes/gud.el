@@ -1610,7 +1610,9 @@ and source-file directory for your debugger."
 ;; characters we match in the file name shown in the prompt.
 ;; (Of course, this matches the "<string>" case too.)
 (defvar gud-pdb-marker-regexp
-  "^> \\([[:graph:] \\]*\\)(\\([0-9]+\\))\\([a-zA-Z0-9_]*\\|\\?\\|<module>\\)()\\(->[^\n\r]*\\)?[\n\r]")
+  (concat "^> \\([[:graph:] \\]*\\)(\\([0-9]+\\))\\([a-zA-Z0-9_]*\\|\\?\\|"
+          "<\\(?:module\\|listcomp\\|dictcomp\\|setcomp\\|genexpr\\|lambda\\|\\)>"
+          "\\)()\\(->[^\n\r]*\\)?[\n\r]"))
 
 (defvar gud-pdb-marker-regexp-file-group 1)
 (defvar gud-pdb-marker-regexp-line-group 2)
@@ -1673,17 +1675,24 @@ and source-file directory for your debugger."
 
     output))
 
-(defcustom gud-pdb-command-name "pdb"
-  "File name for executing the Python debugger.
-This should be an executable on your path, or an absolute file name."
+(defcustom gud-pdb-command-name
+  (if (executable-find "pdb") "pdb" "python -m pdb")
+  "Command that executes the Python debugger."
+  :version "27.1"
   :type 'string
   :group 'gud)
 
 ;;;###autoload
 (defun pdb (command-line)
-  "Run pdb on program FILE in buffer `*gud-FILE*'.
-The directory containing FILE becomes the initial working directory
-and source-file directory for your debugger."
+  "Run COMMAND-LINE in the `*gud-FILE*' buffer.
+
+COMMAND-LINE should include the pdb executable
+name (`gud-pdb-command-name') and the file to be debugged.
+
+If called interactively, the command line will be prompted for.
+
+The directory containing this file becomes the initial working
+directory and source-file directory for your debugger."
   (interactive
    (list (gud-query-cmdline 'pdb)))
 
@@ -3000,7 +3009,7 @@ Obeying it means displaying in another window the specified file and line."
 ;; Rich Schaefer <schaefer@asc.slb.com> Schlumberger, Austin, Tx.
 
 (defun gud-find-c-expr ()
-  "Returns the expr that surrounds point."
+  "Return the expr that surrounds point."
   (interactive)
   (save-excursion
     (let ((p (point))
@@ -3025,7 +3034,7 @@ Obeying it means displaying in another window the specified file and line."
       (buffer-substring (car expr) (cdr expr)))))
 
 (defun gud-innermost-expr ()
-  "Returns the smallest expr that point is in; move point to beginning of it.
+  "Return the smallest expr that point is in; move point to beginning of it.
 The expr is represented as a cons cell, where the car specifies the point in
 the current buffer that marks the beginning of the expr and the cdr specifies
 the character after the end of the expr."
@@ -3057,10 +3066,10 @@ the character after the end of the expr."
     (error t)))
 
 (defun gud-prev-expr ()
-  "Returns the previous expr, point is set to beginning of that expr.
+  "Return the previous expr, point is set to beginning of that expr.
 The expr is represented as a cons cell, where the car specifies the point in
 the current buffer that marks the beginning of the expr and the cdr specifies
-the character after the end of the expr"
+the character after the end of the expr."
   (let ((begin) (end))
     (gud-backward-sexp)
     (setq begin (point))
@@ -3070,7 +3079,7 @@ the character after the end of the expr"
     (cons begin end)))
 
 (defun gud-next-expr ()
-  "Returns the following expr, point is set to beginning of that expr.
+  "Return the following expr, point is set to beginning of that expr.
 The expr is represented as a cons cell, where the car specifies the point in
 the current buffer that marks the beginning of the expr and the cdr specifies
 the character after the end of the expr."

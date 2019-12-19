@@ -246,6 +246,7 @@
         (makasar #x11EE0)
 	(cuneiform #x12000)
 	(cuneiform-numbers-and-punctuation #x12400)
+	(egyptian #x13000)
 	(mro #x16A40)
 	(bassa-vah #x16AD0)
 	(pahawh-hmong #x16B11)
@@ -708,8 +709,8 @@
   ;; For simple scripts
   (dolist (script '(phonetic
 		    armenian
-		    syriac
 		    thaana
+		    syriac
 		    georgian
 		    cherokee
 		    canadian-aboriginal
@@ -718,6 +719,7 @@
 		    symbol
 		    braille
 		    yi
+		    tai-viet
 		    aegean-number
 		    ancient-greek-number
 		    ancient-symbol
@@ -730,17 +732,26 @@
 		    deseret
 		    shavian
 		    osmanya
+		    osage
 		    cypriot-syllabary
 		    phoenician
 		    lydian
 		    kharoshthi
-		    cuneiform
+		    manichaean
+		    elymaic
+		    makasar
 		    cuneiform-numbers-and-punctuation
+		    cuneiform
+		    egyptian
+		    bassa-vah
+		    pahawh-hmong
+		    medefaidrin
 		    byzantine-musical-symbol
 		    musical-symbol
 		    ancient-greek-musical-notation
 		    tai-xuan-jing-symbol
 		    counting-rod-numeral
+		    adlam
 		    mahjong-tile
 		    domino-tile))
     (set-fontset-font "fontset-default"

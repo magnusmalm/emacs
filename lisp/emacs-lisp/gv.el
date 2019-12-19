@@ -214,7 +214,7 @@ The first arg in ARGLIST (the one that receives VAL) receives an expression
 which can do arbitrary things, whereas the other arguments are all guaranteed
 to be pure and copyable.  Example use:
   (gv-define-setter aref (v a i) \\=`(aset ,a ,i ,v))"
-  (declare (indent 2) (debug (&define name sexp body)))
+  (declare (indent 2) (debug (&define name sexp def-body)))
   `(gv-define-expander ,name
      (lambda (do &rest args)
        (declare-function
@@ -568,7 +568,7 @@ REF must have been previously obtained with `gv-ref'."
 (gv-define-setter gv-deref (v ref) `(funcall (cdr ,ref) ,v))
 
 ;; (defmacro gv-letref (vars place &rest body)
-;;   (declare (indent 2) (debug (sexp form &rest body)))
+;;   (declare (indent 2) (debug (sexp form body)))
 ;;   (require 'cl-lib) ;Can't require cl-lib at top-level for bootstrap reasons!
 ;;   (gv-letplace (getter setter) place
 ;;     `(cl-macrolet ((,(nth 0 vars) () ',getter)

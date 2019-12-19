@@ -98,6 +98,16 @@ This is typically the filename.")
 
 ;;;; Commonly needed location classes are defined here:
 
+(defcustom xref-file-name-display 'abs
+  "Style of file name display in *xref* buffers.
+If the value is the symbol `abs', the default, show the file names
+in their full absolute form.
+If `nondirectory', show only the nondirectory (a.k.a. \"base name\")
+part of the file name."
+  :type '(choice (const :tag "absolute file name" abs)
+                 (const :tag "nondirectory file name" nondirectory))
+  :version "27.1")
+
 ;; FIXME: might be useful to have an optional "hint" i.e. a string to
 ;; search for in case the line number is slightly out of date.
 (defclass xref-file-location (xref-location)
@@ -121,12 +131,19 @@ Line numbers start from 1 and columns from 0.")
         (widen)
         (save-excursion
           (goto-char (point-min))
-          (beginning-of-line line)
-          (forward-char column)
+          (ignore-errors
+            ;; xref location may be out of date; it may be past the
+            ;; end of the current file, or the file may have been
+            ;; deleted. Return a reasonable location; the user will
+            ;; figure it out.
+            (beginning-of-line line)
+            (forward-char column))
           (point-marker))))))
 
 (cl-defmethod xref-location-group ((l xref-file-location))
-  (oref l file))
+  (cl-ecase xref-file-name-display
+    (abs (oref l file))
+    (nondirectory (file-name-nondirectory (oref l file)))))
 
 (defclass xref-buffer-location (xref-location)
   ((buffer :type buffer :initarg :buffer)
@@ -256,8 +273,8 @@ find a search tool; by default, this uses \"find | grep\" in the
 (cl-defgeneric xref-backend-identifier-at-point (_backend)
   "Return the relevant identifier at point.
 
-The return value must be a string or nil.  nil means no
-identifier at point found.
+The return value must be a string, or nil meaning no identifier
+at point found.
 
 If it's hard to determine the identifier precisely (e.g., because
 it's a method call on unknown type), the implementation can
@@ -268,7 +285,7 @@ recognize and then delegate the work to an external process."
     (and thing (substring-no-properties thing))))
 
 (cl-defgeneric xref-backend-identifier-completion-table (backend)
-  "Returns the completion table for identifiers.")
+  "Return the completion table for identifiers.")
 
 
 ;;; misc utilities
@@ -716,7 +733,11 @@ references displayed in the current *xref* buffer."
   "Mode for displaying cross-references."
   (setq buffer-read-only t)
   (setq next-error-function #'xref--next-error-function)
-  (setq next-error-last-buffer (current-buffer)))
+  (setq next-error-last-buffer (current-buffer))
+  (setq imenu-prev-index-position-function
+        #'xref--imenu-prev-index-position)
+  (setq imenu-extract-index-name-function
+        #'xref--imenu-extract-index-name))
 
 (defvar xref--transient-buffer-mode-map
   (let ((map (make-sparse-keymap)))
@@ -727,6 +748,22 @@ references displayed in the current *xref* buffer."
 (define-derived-mode xref--transient-buffer-mode
   xref--xref-buffer-mode
   "XREF Transient")
+
+(defun xref--imenu-prev-index-position ()
+  "Move point to previous line in `xref' buffer.
+This function is used as a value for
+`imenu-prev-index-position-function'."
+  (if (bobp)
+      nil
+    (xref--search-property 'xref-group t)))
+
+(defun xref--imenu-extract-index-name ()
+  "Return imenu name for line at point.
+This function is used as a value for
+`imenu-extract-index-name-function'.  Point should be at the
+beginning of the line."
+  (buffer-substring-no-properties (line-beginning-position)
+                                  (line-end-position)))
 
 (defun xref--next-error-function (n reset?)
   (when reset?
@@ -777,7 +814,8 @@ GROUP is a string for decoration purposes and XREF is an
            for line-format = (and max-line-width
                                   (format "%%%dd: " max-line-width))
            do
-           (xref--insert-propertized '(face xref-file-header) group "\n")
+           (xref--insert-propertized '(face xref-file-header 'xref-group t)
+                                     group "\n")
            (cl-loop for (xref . more2) on xrefs do
                     (with-slots (summary location) xref
                       (let* ((line (xref-location-line location))
@@ -945,7 +983,7 @@ Accepts the same arguments as `xref-show-xrefs-function'."
                    nil nil nil
                    'xref--read-identifier-history def)))
              (if (equal id "")
-                 (or def (user-error "There is no defailt identifier"))
+                 (or def (user-error "There is no default identifier"))
                id)))
           (t def))))
 

@@ -3470,7 +3470,11 @@ ns_mouse_position (struct frame **fp, int insist, Lisp_Object *bar_window,
       XFRAME (frame)->mouse_moved = 0;
 
   dpyinfo->last_mouse_scroll_bar = nil;
+  f = dpyinfo->ns_focus_frame ? dpyinfo->ns_focus_frame : SELECTED_FRAME ();
   if (dpyinfo->last_mouse_frame
+      /* While dropping, use the last mouse frame only if there is no
+	 currently focused frame.  */
+      && (!EQ (track_mouse, Qdropping) || !f)
       && FRAME_LIVE_P (dpyinfo->last_mouse_frame))
     f = dpyinfo->last_mouse_frame;
   else
@@ -4390,9 +4394,9 @@ ns_draw_text_decoration (struct glyph_string *s, struct face *face,
     return;
 
   /* Do underline.  */
-  if (face->underline_p)
+  if (face->underline)
     {
-      if (s->face->underline_type == FACE_UNDER_WAVE)
+      if (s->face->underline == FACE_UNDER_WAVE)
         {
           if (face->underline_defaulted_p)
             [defaultCol set];
@@ -4401,15 +4405,15 @@ ns_draw_text_decoration (struct glyph_string *s, struct face *face,
 
           ns_draw_underwave (s, width, x);
         }
-      else if (s->face->underline_type == FACE_UNDER_LINE)
+      else if (s->face->underline == FACE_UNDER_LINE)
         {
 
           NSRect r;
           unsigned long thickness, position;
 
           /* If the prev was underlined, match its appearance.  */
-          if (s->prev && s->prev->face->underline_p
-	      && s->prev->face->underline_type == FACE_UNDER_LINE
+          if (s->prev
+	      && s->prev->face->underline == FACE_UNDER_LINE
               && s->prev->underline_thickness > 0)
             {
               thickness = s->prev->underline_thickness;
@@ -4903,10 +4907,13 @@ ns_dumpglyphs_stretch (struct glyph_string *s)
   if (!s->background_filled_p)
     {
       n = ns_get_glyph_string_clip_rect (s, r);
-      *r = NSMakeRect (s->x, s->y, s->background_width, s->height);
 
       if (ns_clip_to_rect (s->f, r, n))
         {
+          /* FIXME: Why are we reusing the clipping rectangles? The
+             other terms don't appear to do anything like this.  */
+          *r = NSMakeRect (s->x, s->y, s->background_width, s->height);
+
           if (s->hl == DRAW_MOUSE_FACE)
             {
               face = FACE_FROM_ID_OR_NULL (s->f,
@@ -4941,13 +4948,6 @@ ns_dumpglyphs_stretch (struct glyph_string *s)
                         r[i].origin.x += leftoverrun;
                         r[i].size.width -= leftoverrun;
                       }
-
-                    /* XXX: Try to work between problem where a stretch glyph on
-                       a partially-visible bottom row will clear part of the
-                       modeline, and another where list-buffers headers and similar
-                       rows erroneously have visible_height set to 0.  Not sure
-                       where this is coming from as other terms seem not to show.  */
-                    r[i].size.height = min (s->height, s->row->visible_height);
                 }
 
               [bgCol set];
@@ -7940,7 +7940,7 @@ not_in_argv (NSString *arg)
       NSTRACE_MSG ("mouse_autoselect_window");
       static Lisp_Object last_mouse_window;
       Lisp_Object window
-	= window_from_coordinates (emacsframe, pt.x, pt.y, 0, 0);
+	= window_from_coordinates (emacsframe, pt.x, pt.y, 0, 0, 0);
 
       if (WINDOWP (window)
           && !EQ (window, last_mouse_window)

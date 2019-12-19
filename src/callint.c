@@ -35,7 +35,6 @@ static Lisp_Object point_marker;
 /* String for the prompt text used in Fcall_interactively.  */
 static Lisp_Object callint_message;
 
-/* ARGSUSED */
 DEFUN ("interactive", Finteractive, Sinteractive, 0, UNEVALLED, 0,
        doc: /* Specify a way of parsing arguments for interactive use of a function.
 For example, write
@@ -268,8 +267,9 @@ means unconditionally put this command in the variable `command-history'.
 Otherwise, this is done only if an arg is read using the minibuffer.
 
 Optional third arg KEYS, if given, specifies the sequence of events to
-supply, as a vector, if the command inquires which events were used to
-invoke it.  If KEYS is omitted or nil, the return value of
+supply, as a vector, if FUNCTION inquires which events were used to
+invoke it (via an `interactive' spec that contains, for instance, an
+\"e\" code letter).  If KEYS is omitted or nil, the return value of
 `this-command-keys-vector' is used.  */)
   (Lisp_Object function, Lisp_Object record_flag, Lisp_Object keys)
 {
@@ -798,7 +798,7 @@ Its numeric meaning is what you would get from `(interactive "p")'.  */)
   else if (EQ (raw, Qminus))
     XSETINT (val, -1);
   else if (CONSP (raw) && FIXNUMP (XCAR (raw)))
-    XSETINT (val, XFIXNUM (XCAR (raw)));
+    val = XCAR (raw);
   else if (FIXNUMP (raw))
     val = raw;
   else

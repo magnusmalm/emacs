@@ -837,8 +837,7 @@ Stops when a match is found.
 To continue searching for next match, use command \\[tags-loop-continue]."
   (interactive "sSearch marked files (regexp): ")
   (tags-search regexp
-               (lambda ()
-                 (mapcar #'car (vc-dir-marked-only-files-and-states)))))
+               (mapcar #'car (vc-dir-marked-only-files-and-states))))
 
 (defun vc-dir-query-replace-regexp (from to &optional delimited)
   "Do `query-replace-regexp' of FROM with TO, on all marked files.
@@ -865,10 +864,18 @@ with the command \\[tags-loop-continue]."
    delimited)
   (fileloop-continue))
 
-(defun vc-dir-ignore ()
-  "Ignore the current file."
-  (interactive)
-  (vc-ignore (vc-dir-current-file)))
+(defun vc-dir-ignore (&optional arg)
+  "Ignore the current file.
+If a prefix argument is given, ignore all marked files."
+  (interactive "P")
+  (if arg
+      (ewoc-map
+       (lambda (filearg)
+	 (when (vc-dir-fileinfo->marked filearg)
+	   (vc-ignore (vc-dir-fileinfo->name filearg))
+	   t))
+       vc-ewoc)
+    (vc-ignore (vc-dir-current-file))))
 
 (defun vc-dir-current-file ()
   (let ((node (ewoc-locate vc-ewoc)))

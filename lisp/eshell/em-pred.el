@@ -229,6 +229,12 @@ FOR LISTS OF ARGUMENTS:
 EXAMPLES:
   *.c(:o)  sorted list of .c files")
 
+(defvar eshell-pred-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c M-q") #'eshell-display-predicate-help)
+    (define-key map (kbd "C-c M-m") #'eshell-display-modifier-help)
+    map))
+
 ;;; Functions:
 
 (defun eshell-display-predicate-help ()
@@ -245,12 +251,17 @@ EXAMPLES:
     (lambda ()
       (insert eshell-modifier-help-string)))))
 
+(define-minor-mode eshell-pred-mode
+  "Minor mode for the eshell-pred module.
+
+\\{eshell-pred-mode-map}"
+  :keymap eshell-pred-mode-map)
+
 (defun eshell-pred-initialize ()    ;Called from `eshell-mode' via intern-soft!
   "Initialize the predicate/modifier code."
   (add-hook 'eshell-parse-argument-hook
 	    #'eshell-parse-arg-modifier t t)
-  (define-key eshell-command-map [(meta ?q)] 'eshell-display-predicate-help)
-  (define-key eshell-command-map [(meta ?m)] 'eshell-display-modifier-help))
+  (eshell-pred-mode))
 
 (defun eshell-apply-modifiers (lst predicates modifiers)
   "Apply to LIST a series of PREDICATES and MODIFIERS."
@@ -450,7 +461,7 @@ resultant list of strings."
 (defun eshell-pred-file-type (type)
   "Return a test which tests that the file is of a certain TYPE.
 TYPE must be a character, and should be one of the possible options
-that `ls -l' will show in the first column of its display. "
+that `ls -l' will show in the first column of its display."
   (when (eq type ?%)
     (setq type (char-after))
     (if (memq type '(?b ?c))

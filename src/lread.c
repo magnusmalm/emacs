@@ -287,6 +287,7 @@ readchar (Lisp_Object readcharfun, bool *multibyte)
 
   if (EQ (readcharfun, Qget_file_char))
     {
+      eassert (infile);
       readbyte = readbyte_from_file;
       goto read_multibyte;
     }
@@ -320,6 +321,7 @@ readchar (Lisp_Object readcharfun, bool *multibyte)
 	 string, and the cdr part is a value of readcharfun given to
 	 read_vector.  */
       readbyte = readbyte_from_string;
+      eassert (infile);
       if (EQ (XCDR (readcharfun), Qget_emacs_mule_file_char))
 	emacs_mule_encoding = 1;
       goto read_multibyte;
@@ -328,6 +330,7 @@ readchar (Lisp_Object readcharfun, bool *multibyte)
   if (EQ (readcharfun, Qget_emacs_mule_file_char))
     {
       readbyte = readbyte_from_file;
+      eassert (infile);
       emacs_mule_encoding = 1;
       goto read_multibyte;
     }
@@ -506,6 +509,7 @@ readbyte_from_stdio (void)
 static int
 readbyte_from_file (int c, Lisp_Object readcharfun)
 {
+  eassert (infile);
   if (c >= 0)
     {
       eassert (infile->lookahead < sizeof infile->buf);
@@ -758,9 +762,13 @@ If you want to read non-character events, or ignore them, call
 `read-event' or `read-char-exclusive' instead.
 
 If the optional argument PROMPT is non-nil, display that as a prompt.
+If PROMPT is nil or the string \"\", the key sequence/events that led
+to the current command is used as the prompt.
+
 If the optional argument INHERIT-INPUT-METHOD is non-nil and some
 input method is turned on in the current buffer, that input method
 is used for reading a character.
+
 If the optional argument SECONDS is non-nil, it should be a number
 specifying the maximum number of seconds to wait for input.  If no
 input arrives in that time, return nil.  SECONDS may be a
@@ -780,9 +788,13 @@ floating-point value.  */)
 DEFUN ("read-event", Fread_event, Sread_event, 0, 3, 0,
        doc: /* Read an event object from the input stream.
 If the optional argument PROMPT is non-nil, display that as a prompt.
+If PROMPT is nil or the string \"\", the key sequence/events that led
+to the current command is used as the prompt.
+
 If the optional argument INHERIT-INPUT-METHOD is non-nil and some
 input method is turned on in the current buffer, that input method
 is used for reading a character.
+
 If the optional argument SECONDS is non-nil, it should be a number
 specifying the maximum number of seconds to wait for input.  If no
 input arrives in that time, return nil.  SECONDS may be a
@@ -805,9 +817,13 @@ character code: it will fail the `characterp' test.  Use `event-basic-type'
 to recover the character code with the modifiers removed.
 
 If the optional argument PROMPT is non-nil, display that as a prompt.
+If PROMPT is nil or the string \"\", the key sequence/events that led
+to the current command is used as the prompt.
+
 If the optional argument INHERIT-INPUT-METHOD is non-nil and some
 input method is turned on in the current buffer, that input method
 is used for reading a character.
+
 If the optional argument SECONDS is non-nil, it should be a number
 specifying the maximum number of seconds to wait for input.  If no
 input arrives in that time, return nil.  SECONDS may be a
@@ -1048,18 +1064,13 @@ required.
 This uses the variables `load-suffixes' and `load-file-rep-suffixes'.  */)
   (void)
 {
-  Lisp_Object lst = Qnil, suffixes = Vload_suffixes, suffix, ext;
-  while (CONSP (suffixes))
+  Lisp_Object lst = Qnil, suffixes = Vload_suffixes;
+  FOR_EACH_TAIL (suffixes)
     {
       Lisp_Object exts = Vload_file_rep_suffixes;
-      suffix = XCAR (suffixes);
-      suffixes = XCDR (suffixes);
-      while (CONSP (exts))
-	{
-	  ext = XCAR (exts);
-	  exts = XCDR (exts);
-	  lst = Fcons (concat2 (suffix, ext), lst);
-	}
+      Lisp_Object suffix = XCAR (suffixes);
+      FOR_EACH_TAIL (exts)
+	lst = Fcons (concat2 (suffix, XCAR (exts)), lst);
     }
   return Fnreverse (lst);
 }
@@ -1078,10 +1089,10 @@ suffix_p (Lisp_Object string, const char *suffix)
 static void
 close_infile_unwind (void *arg)
 {
-  FILE *stream = arg;
-  eassert (infile == NULL || infile->stream == stream);
-  infile = NULL;
-  fclose (stream);
+  struct infile *prev_infile = arg;
+  eassert (infile && infile != prev_infile);
+  fclose (infile->stream);
+  infile = prev_infile;
 }
 
 DEFUN ("load", Fload, Sload, 1, 5, 0,
@@ -1274,8 +1285,8 @@ Return t if the file exists and loads successfully.  */)
      the general case; the second load may do something different.  */
   {
     int load_count = 0;
-    Lisp_Object tem;
-    for (tem = Vloads_in_progress; CONSP (tem); tem = XCDR (tem))
+    Lisp_Object tem = Vloads_in_progress;
+    FOR_EACH_TAIL_SAFE (tem)
       if (!NILP (Fequal (found, XCAR (tem))) && (++load_count > 3))
 	signal_error ("Recursive load", Fcons (found, Vloads_in_progress));
     record_unwind_protect (record_load_unwind, Vloads_in_progress);
@@ -1353,7 +1364,7 @@ Return t if the file exists and loads successfully.  */)
                     {
                       Lisp_Object msg_file;
                       msg_file = Fsubstring (found, make_fixnum (0), make_fixnum (-1));
-                      message_with_string ("Source file `%s' newer than byte-compiled file",
+                      message_with_string ("Source file `%s' newer than byte-compiled file; using older file",
                                            msg_file, 1);
                     }
                 }
@@ -1399,6 +1410,10 @@ Return t if the file exists and loads successfully.  */)
 #endif
     }
 
+  /* Declare here rather than inside the else-part because the storage
+     might be accessed by the unbind_to call below.  */
+  struct infile input;
+
   if (is_module)
     {
       /* `module-load' uses the file name, so we can close the stream
@@ -1413,7 +1428,10 @@ Return t if the file exists and loads successfully.  */)
     {
       if (! stream)
         report_file_error ("Opening stdio stream", file);
-      set_unwind_protect_ptr (fd_index, close_infile_unwind, stream);
+      set_unwind_protect_ptr (fd_index, close_infile_unwind, infile);
+      input.stream = stream;
+      input.lookahead = 0;
+      infile = &input;
     }
 
   if (! NILP (Vpurify_flag))
@@ -1439,10 +1457,6 @@ Return t if the file exists and loads successfully.  */)
   specbind (Qinhibit_file_name_operation, Qnil);
   specbind (Qload_in_progress, Qt);
 
-  /* Declare here rather than inside the else-part because the storage
-     might be accessed by the unbind_to call below.  */
-  struct infile input;
-
   if (is_module)
     {
 #ifdef HAVE_MODULES
@@ -1457,10 +1471,6 @@ Return t if the file exists and loads successfully.  */)
     }
   else
     {
-      input.stream = stream;
-      input.lookahead = 0;
-      infile = &input;
-
       if (lisp_file_lexically_bound_p (Qget_file_char))
         Fset (Qlexical_binding, Qt);
 
@@ -1596,7 +1606,8 @@ openp (Lisp_Object path, Lisp_Object str, Lisp_Object suffixes,
 
   CHECK_STRING (str);
 
-  for (tail = suffixes; CONSP (tail); tail = XCDR (tail))
+  tail = suffixes;
+  FOR_EACH_TAIL_SAFE (tail)
     {
       CHECK_STRING_CAR (tail);
       max_suffix_len = max (max_suffix_len,
@@ -1610,12 +1621,17 @@ openp (Lisp_Object path, Lisp_Object str, Lisp_Object suffixes,
 
   absolute = complete_filename_p (str);
 
+  AUTO_LIST1 (just_use_str, Qnil);
+  if (NILP (path))
+    path = just_use_str;
+
   /* Go through all entries in the path and see whether we find the
      executable. */
-  do {
+  FOR_EACH_TAIL_SAFE (path)
+   {
     ptrdiff_t baselen, prefixlen;
 
-    if (NILP (path))
+    if (EQ (path, just_use_str))
       filename = str;
     else
       filename = Fexpand_file_name (str, XCAR (path));
@@ -1648,8 +1664,9 @@ openp (Lisp_Object path, Lisp_Object str, Lisp_Object suffixes,
     memcpy (fn, SDATA (filename) + prefixlen, baselen);
 
     /* Loop over suffixes.  */
-    for (tail = NILP (suffixes) ? list1 (empty_unibyte_string) : suffixes;
-	 CONSP (tail); tail = XCDR (tail))
+    AUTO_LIST1 (empty_string_only, empty_unibyte_string);
+    tail = NILP (suffixes) ? empty_string_only : suffixes;
+    FOR_EACH_TAIL_SAFE (tail)
       {
 	Lisp_Object suffix = XCAR (tail);
 	ptrdiff_t fnlen, lsuffix = SBYTES (suffix);
@@ -1731,16 +1748,20 @@ openp (Lisp_Object path, Lisp_Object str, Lisp_Object suffixes,
 		  {
 		    if (file_directory_p (encoded_fn))
 		      last_errno = EISDIR;
-		    else
+		    else if (errno == ENOENT || errno == ENOTDIR)
 		      fd = 1;
+		    else
+		      last_errno = errno;
 		  }
+		else if (! (errno == ENOENT || errno == ENOTDIR))
+		  last_errno = errno;
 	      }
 	    else
 	      {
 		fd = emacs_open (pfn, O_RDONLY, 0);
 		if (fd < 0)
 		  {
-		    if (errno != ENOENT)
+		    if (! (errno == ENOENT || errno == ENOTDIR))
 		      last_errno = errno;
 		  }
 		else
@@ -1793,10 +1814,9 @@ openp (Lisp_Object path, Lisp_Object str, Lisp_Object suffixes,
 	      }
 	  }
       }
-    if (absolute || NILP (path))
+    if (absolute)
       break;
-    path = XCDR (path);
-  } while (CONSP (path));
+   }
 
   SAFE_FREE ();
   errno = last_errno;
@@ -1823,7 +1843,7 @@ build_load_history (Lisp_Object filename, bool entire)
   tail = Vload_history;
   prev = Qnil;
 
-  while (CONSP (tail))
+  FOR_EACH_TAIL (tail)
     {
       tem = XCAR (tail);
 
@@ -1846,22 +1866,19 @@ build_load_history (Lisp_Object filename, bool entire)
 	    {
 	      tem2 = Vcurrent_load_list;
 
-	      while (CONSP (tem2))
+	      FOR_EACH_TAIL (tem2)
 		{
 		  newelt = XCAR (tem2);
 
 		  if (NILP (Fmember (newelt, tem)))
 		    Fsetcar (tail, Fcons (XCAR (tem),
 		     			  Fcons (newelt, XCDR (tem))));
-
-		  tem2 = XCDR (tem2);
 		  maybe_quit ();
 		}
 	    }
 	}
       else
 	prev = tail;
-      tail = XCDR (tail);
       maybe_quit ();
     }
 
@@ -1903,10 +1920,9 @@ readevalloop_eager_expand_eval (Lisp_Object val, Lisp_Object macroexpand)
   if (EQ (CAR_SAFE (val), Qprogn))
     {
       Lisp_Object subforms = XCDR (val);
-
-      for (val = Qnil; CONSP (subforms); subforms = XCDR (subforms))
-          val = readevalloop_eager_expand_eval (XCAR (subforms),
-                                                macroexpand);
+      val = Qnil;
+      FOR_EACH_TAIL (subforms)
+	val = readevalloop_eager_expand_eval (XCAR (subforms), macroexpand);
     }
   else
       val = eval_sub (call2 (macroexpand, val, Qt));
@@ -1975,11 +1991,10 @@ readevalloop (Lisp_Object readcharfun,
 	    (NILP (lex_bound) || EQ (lex_bound, Qunbound)
 	     ? Qnil : list1 (Qt)));
 
-  /* Try to ensure sourcename is a truename, except whilst preloading.  */
+  /* Ensure sourcename is absolute, except whilst preloading.  */
   if (!will_dump_p ()
-      && !NILP (sourcename) && !NILP (Ffile_name_absolute_p (sourcename))
-      && !NILP (Ffboundp (Qfile_truename)))
-    sourcename = call1 (Qfile_truename, sourcename) ;
+      && !NILP (sourcename) && !NILP (Ffile_name_absolute_p (sourcename)))
+    sourcename = Fexpand_file_name (sourcename, Qnil);
 
   LOADHIST_ATTACH (sourcename);
 
@@ -2019,7 +2034,7 @@ readevalloop (Lisp_Object readcharfun,
       if (b && first_sexp)
 	whole_buffer = (BUF_PT (b) == BUF_BEG (b) && BUF_ZV (b) == BUF_Z (b));
 
-      infile = infile0;
+      eassert (!infile0 || infile == infile0);
     read_next:
       c = READCHAR;
       if (c == ';')
@@ -2131,6 +2146,12 @@ UNIBYTE, if non-nil, specifies `load-convert-to-unibyte' for this
 DO-ALLOW-PRINT, if non-nil, specifies that output functions in the
  evaluated code should work normally even if PRINTFLAG is nil, in
  which case the output is displayed in the echo area.
+
+This function ignores the current value of the `lexical-binding'
+variable.  Instead it will heed any
+  -*- lexical-binding: t -*-
+settings in the buffer, and if there is no such setting, the buffer
+will be evaluated without lexical binding.
 
 This function preserves the position of point.  */)
   (Lisp_Object buffer, Lisp_Object printflag, Lisp_Object filename, Lisp_Object unibyte, Lisp_Object do_allow_print)
@@ -2573,7 +2594,8 @@ read_escape (Lisp_Object readcharfun, bool stringp)
 	       want.  */
 	    int digit = char_hexdigit (c);
 	    if (digit < 0)
-	      error ("Non-hex digit used for Unicode escape");
+	      error ("Non-hex character used for Unicode escape: %c (%d)",
+		     c, c);
 	    i = (i << 4) + digit;
 	  }
 	if (i > 0x10FFFF)
@@ -2846,16 +2868,19 @@ read1 (Lisp_Object readcharfun, int *pch, bool first_in_list)
 	      /* Now use params to make a new hash table and fill it.  */
 	      ht = Fmake_hash_table (param_count, params);
 
-	      while (CONSP (data))
-	      	{
+	      Lisp_Object last = data;
+	      FOR_EACH_TAIL_SAFE (data)
+		{
 	      	  key = XCAR (data);
 	      	  data = XCDR (data);
 	      	  if (!CONSP (data))
-		    error ("Odd number of elements in hash table data");
+		    break;
 	      	  val = XCAR (data);
-	      	  data = XCDR (data);
+		  last = XCDR (data);
 	      	  Fputhash (key, val, ht);
-	      	}
+		}
+	      if (!NILP (last))
+		error ("Hash table data is not a list of even length");
 
 	      return ht;
 	    }
@@ -3161,8 +3186,7 @@ read1 (Lisp_Object readcharfun, int *pch, bool first_in_list)
 		      Lisp_Object placeholder = Fcons (Qnil, Qnil);
 		      struct Lisp_Hash_Table *h
 			= XHASH_TABLE (read_objects_map);
-		      EMACS_UINT hash;
-		      Lisp_Object number = make_fixnum (n);
+		      Lisp_Object number = make_fixnum (n), hash;
 
 		      ptrdiff_t i = hash_lookup (h, number, &hash);
 		      if (i >= 0)
@@ -3292,8 +3316,6 @@ read1 (Lisp_Object readcharfun, int *pch, bool first_in_list)
 
 	    if (ch == '@')
 	      comma_type = Qcomma_at;
-	    else if (ch == '.')
-	      comma_type = Qcomma_dot;
 	    else
 	      {
 		if (ch >= 0) UNREAD (ch);
@@ -4651,9 +4673,6 @@ load_path_default (void)
 void
 init_lread (void)
 {
-  if (NILP (Vpurify_flag) && !NILP (Ffboundp (Qfile_truename)))
-    Vsource_directory = call1 (Qfile_truename, Vsource_directory);
-
   /* First, set Vload_path.  */
 
   /* Ignore EMACSLOADPATH when dumping.  */
@@ -5065,7 +5084,6 @@ this variable will become obsolete.  */);
   DEFSYM (Qbackquote, "`");
   DEFSYM (Qcomma, ",");
   DEFSYM (Qcomma_at, ",@");
-  DEFSYM (Qcomma_dot, ",.");
 
   DEFSYM (Qinhibit_file_name_operation, "inhibit-file-name-operation");
   DEFSYM (Qascii_character, "ascii-character");
@@ -5073,7 +5091,6 @@ this variable will become obsolete.  */);
   DEFSYM (Qload, "load");
   DEFSYM (Qload_file_name, "load-file-name");
   DEFSYM (Qeval_buffer_list, "eval-buffer-list");
-  DEFSYM (Qfile_truename, "file-truename");
   DEFSYM (Qdir_ok, "dir-ok");
   DEFSYM (Qdo_after_load_evaluation, "do-after-load-evaluation");
 

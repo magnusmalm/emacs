@@ -1602,6 +1602,94 @@ x_set_menu_bar_lines (struct frame *f, Lisp_Object value, Lisp_Object oldval)
 }
 
 
+/* Set the number of lines used for the tab bar of frame F to VALUE.
+   VALUE not an integer, or < 0 means set the lines to zero.  OLDVAL
+   is the old number of tab bar lines.  This function changes the
+   height of all windows on frame F to match the new tab bar height.
+   The frame's height doesn't change.  */
+
+static void
+x_set_tab_bar_lines (struct frame *f, Lisp_Object value, Lisp_Object oldval)
+{
+  int nlines;
+
+  /* Treat tab bars like menu bars.  */
+  if (FRAME_MINIBUF_ONLY_P (f))
+    return;
+
+  /* Use VALUE only if an int >= 0.  */
+  if (RANGED_FIXNUMP (0, value, INT_MAX))
+    nlines = XFIXNAT (value);
+  else
+    nlines = 0;
+
+  x_change_tab_bar_height (f, nlines * FRAME_LINE_HEIGHT (f));
+}
+
+
+/* Set the pixel height of the tab bar of frame F to HEIGHT.  */
+void
+x_change_tab_bar_height (struct frame *f, int height)
+{
+  int unit = FRAME_LINE_HEIGHT (f);
+  int old_height = FRAME_TAB_BAR_HEIGHT (f);
+  int lines = (height + unit - 1) / unit;
+  Lisp_Object fullscreen;
+
+  /* Make sure we redisplay all windows in this frame.  */
+  fset_redisplay (f);
+
+  /* Recalculate tab bar and frame text sizes.  */
+  FRAME_TAB_BAR_HEIGHT (f) = height;
+  FRAME_TAB_BAR_LINES (f) = lines;
+  /* Store the `tab-bar-lines' and `height' frame parameters.  */
+  store_frame_param (f, Qtab_bar_lines, make_fixnum (lines));
+  store_frame_param (f, Qheight, make_fixnum (FRAME_LINES (f)));
+
+  /* We also have to make sure that the internal border at the top of
+     the frame, below the menu bar or tab bar, is redrawn when the
+     tab bar disappears.  This is so because the internal border is
+     below the tab bar if one is displayed, but is below the menu bar
+     if there isn't a tab bar.  The tab bar draws into the area
+     below the menu bar.  */
+  if (FRAME_X_WINDOW (f) && FRAME_TAB_BAR_HEIGHT (f) == 0)
+    {
+      clear_frame (f);
+      clear_current_matrices (f);
+    }
+
+  if ((height < old_height) && WINDOWP (f->tab_bar_window))
+    clear_glyph_matrix (XWINDOW (f->tab_bar_window)->current_matrix);
+
+  /* Recalculate tabbar height.  */
+  f->n_tab_bar_rows = 0;
+  if (old_height == 0
+      && (!f->after_make_frame
+	  || NILP (frame_inhibit_implied_resize)
+	  || (CONSP (frame_inhibit_implied_resize)
+	      && NILP (Fmemq (Qtab_bar_lines, frame_inhibit_implied_resize)))))
+    f->tab_bar_redisplayed = f->tab_bar_resized = false;
+
+  adjust_frame_size (f, -1, -1,
+		     ((!f->tab_bar_resized
+		       && (NILP (fullscreen =
+				 get_frame_param (f, Qfullscreen))
+			   || EQ (fullscreen, Qfullwidth))) ? 1
+		      : (old_height == 0 || height == 0) ? 2
+		      : 4),
+		     false, Qtab_bar_lines);
+
+  f->tab_bar_resized = f->tab_bar_redisplayed;
+
+  /* adjust_frame_size might not have done anything, garbage frame
+     here.  */
+  adjust_frame_glyphs (f);
+  SET_FRAME_GARBAGED (f);
+  if (FRAME_X_WINDOW (f))
+    x_clear_under_internal_border (f);
+}
+
+
 /* Set the number of lines used for the tool bar of frame F to VALUE.
    VALUE not an integer, or < 0 means set the lines to zero.  OLDVAL
    is the old number of tool bar lines.  This function changes the
@@ -3922,6 +4010,10 @@ This function is an internal primitive--use `make-frame' instead.  */)
                          NILP (Vmenu_bar_mode)
                          ? make_fixnum (0) : make_fixnum (1),
                          NULL, NULL, RES_TYPE_NUMBER);
+  gui_default_parameter (f, parms, Qtab_bar_lines,
+                         NILP (Vtab_bar_mode)
+                         ? make_fixnum (0) : make_fixnum (1),
+                         NULL, NULL, RES_TYPE_NUMBER);
   gui_default_parameter (f, parms, Qtool_bar_lines,
                          NILP (Vtool_bar_mode)
                          ? make_fixnum (0) : make_fixnum (1),
@@ -3941,7 +4033,7 @@ This function is an internal primitive--use `make-frame' instead.  */)
                          RES_TYPE_BOOLEAN);
 
   /* Compute the size of the X window.  */
-  window_prompting = gui_figure_window_size (f, parms, true,
+  window_prompting = gui_figure_window_size (f, parms, true, true,
                                              &x_width, &x_height);
 
   tem = gui_display_get_arg (dpyinfo, parms, Qunsplittable, 0, 0,
@@ -5060,6 +5152,7 @@ frame_geometry (Lisp_Object frame, Lisp_Object attribute)
   int internal_border_width;
   bool menu_bar_external = false, tool_bar_external = false;
   int menu_bar_height = 0, menu_bar_width = 0;
+  int tab_bar_height = 0, tab_bar_width = 0;
   int tool_bar_height = 0, tool_bar_width = 0;
 
   if (FRAME_INITIAL_P (f) || !FRAME_X_P (f) || !FRAME_OUTER_WINDOW (f))
@@ -5130,6 +5223,12 @@ frame_geometry (Lisp_Object frame, Lisp_Object attribute)
 #endif
   menu_bar_width = menu_bar_height ? native_width : 0;
 
+  tab_bar_height = FRAME_TAB_BAR_HEIGHT (f);
+  tab_bar_width = (tab_bar_height
+		    ? native_width - 2 * internal_border_width
+		    : 0);
+  inner_top += tab_bar_height;
+
 #ifdef HAVE_EXT_TOOL_BAR
   tool_bar_external = true;
   if (EQ (FRAME_TOOL_BAR_POSITION (f), Qleft))
@@ -5198,6 +5297,9 @@ frame_geometry (Lisp_Object frame, Lisp_Object attribute)
 	     Fcons (Qmenu_bar_size,
 		    Fcons (make_fixnum (menu_bar_width),
 			   make_fixnum (menu_bar_height))),
+	     Fcons (Qtab_bar_size,
+		    Fcons (make_fixnum (tab_bar_width),
+			   make_fixnum (tab_bar_height))),
 	     Fcons (Qtool_bar_external, tool_bar_external ? Qt : Qnil),
 	     Fcons (Qtool_bar_position, FRAME_TOOL_BAR_POSITION (f)),
 	     Fcons (Qtool_bar_size,
@@ -5720,7 +5822,7 @@ x_sync (struct frame *f)
  ***********************************************************************/
 
 DEFUN ("x-change-window-property", Fx_change_window_property,
-       Sx_change_window_property, 2, 6, 0,
+       Sx_change_window_property, 2, 7, 0,
        doc: /* Change window property PROP to VALUE on the X window of FRAME.
 PROP must be a string.  VALUE may be a string or a list of conses,
 numbers and/or strings.  If an element in the list is a string, it is
@@ -5730,14 +5832,20 @@ top bits and the cdr is the lower 16 bits.
 
 FRAME nil or omitted means use the selected frame.
 If TYPE is given and non-nil, it is the name of the type of VALUE.
-If TYPE is not given or nil, the type is STRING.
+ If TYPE is not given or nil, the type is STRING.
 FORMAT gives the size in bits of each element if VALUE is a list.
-It must be one of 8, 16 or 32.
-If VALUE is a string or FORMAT is nil or not given, FORMAT defaults to 8.
+ It must be one of 8, 16 or 32.
+ If VALUE is a string or FORMAT is nil or not given, FORMAT defaults to 8.
 If OUTER-P is non-nil, the property is changed for the outer X window of
-FRAME.  Default is to change on the edit X window.  */)
+ FRAME.  Default is to change on the edit X window.
+If WINDOW-ID is non-nil, change the property of that window instead
+ of FRAME's X window; the number 0 denotes the root window.  This argument
+ is separate from FRAME because window IDs are not unique across X
+ displays or screens on the same display, so FRAME provides context
+ for the window ID. */)
   (Lisp_Object prop, Lisp_Object value, Lisp_Object frame,
-   Lisp_Object type, Lisp_Object format, Lisp_Object outer_p)
+   Lisp_Object type, Lisp_Object format, Lisp_Object outer_p,
+   Lisp_Object window_id)
 {
   struct frame *f = decode_window_system_frame (frame);
   Atom prop_atom;
@@ -5745,7 +5853,7 @@ FRAME.  Default is to change on the edit X window.  */)
   int element_format = 8;
   unsigned char *data;
   int nelements;
-  Window w;
+  Window target_window;
 
   CHECK_STRING (prop);
 
@@ -5793,6 +5901,20 @@ FRAME.  Default is to change on the edit X window.  */)
       nelements = SBYTES (value) / elsize;
     }
 
+  if (! NILP (window_id))
+    {
+      CONS_TO_INTEGER (window_id, Window, target_window);
+      if (! target_window)
+        target_window = FRAME_DISPLAY_INFO (f)->root_window;
+    }
+  else
+    {
+      if (! NILP (outer_p))
+        target_window = FRAME_OUTER_WINDOW (f);
+      else
+        target_window = FRAME_X_WINDOW (f);
+    }
+
   block_input ();
   prop_atom = XInternAtom (FRAME_X_DISPLAY (f), SSDATA (prop), False);
   if (! NILP (type))
@@ -5801,10 +5923,7 @@ FRAME.  Default is to change on the edit X window.  */)
       target_type = XInternAtom (FRAME_X_DISPLAY (f), SSDATA (type), False);
     }
 
-  if (! NILP (outer_p)) w = FRAME_OUTER_WINDOW (f);
-  else w = FRAME_X_WINDOW (f);
-
-  XChangeProperty (FRAME_X_DISPLAY (f), w,
+  XChangeProperty (FRAME_X_DISPLAY (f), target_window,
 		   prop_atom, target_type, element_format, PropModeReplace,
 		   data, nelements);
 
@@ -5819,18 +5938,34 @@ FRAME.  Default is to change on the edit X window.  */)
 
 
 DEFUN ("x-delete-window-property", Fx_delete_window_property,
-       Sx_delete_window_property, 1, 2, 0,
+       Sx_delete_window_property, 1, 3, 0,
        doc: /* Remove window property PROP from X window of FRAME.
-FRAME nil or omitted means use the selected frame.  Value is PROP.  */)
-  (Lisp_Object prop, Lisp_Object frame)
+FRAME nil or omitted means use the selected frame.
+If WINDOW-ID is non-nil, remove property from that window instead
+ of FRAME's X window; the number 0 denotes the root window.  This
+ argument is separate from FRAME because window IDs are not unique
+ across X displays or screens on the same display, so FRAME provides
+ context for the window ID.
+
+Value is PROP.  */)
+  (Lisp_Object prop, Lisp_Object frame, Lisp_Object window_id)
 {
   struct frame *f = decode_window_system_frame (frame);
+  Window target_window = FRAME_X_WINDOW (f);
   Atom prop_atom;
 
   CHECK_STRING (prop);
+
+  if (! NILP (window_id))
+    {
+      CONS_TO_INTEGER (window_id, Window, target_window);
+      if (! target_window)
+        target_window = FRAME_DISPLAY_INFO (f)->root_window;
+    }
+
   block_input ();
   prop_atom = XInternAtom (FRAME_X_DISPLAY (f), SSDATA (prop), False);
-  XDeleteProperty (FRAME_X_DISPLAY (f), FRAME_X_WINDOW (f), prop_atom);
+  XDeleteProperty (FRAME_X_DISPLAY (f), target_window, prop_atom);
 
   /* Make sure the property is removed when we return.  */
   XFlush (FRAME_X_DISPLAY (f));
@@ -5924,16 +6059,19 @@ If FRAME is nil or omitted, use the selected frame.
 
 On X Windows, the following optional arguments are also accepted:
 If TYPE is nil or omitted, get the property as a string.
-Otherwise TYPE is the name of the atom that denotes the type expected.
-If SOURCE is non-nil, get the property on that window instead of from
-FRAME.  The number 0 denotes the root window.
+ Otherwise TYPE is the name of the atom that denotes the expected type.
+If WINDOW-ID is non-nil, get the property of that window instead of
+ FRAME's X window; the number 0 denotes the root window.  This argument
+ is separate from FRAME because window IDs are not unique across X
+ displays or screens on the same display, so FRAME provides context
+ for the window ID.
 If DELETE-P is non-nil, delete the property after retrieving it.
-If VECTOR-RET-P is non-nil, don't return a string but a vector of values.
+If VECTOR-RET-P is non-nil, return a vector of values instead of a string.
 
-Value is nil if FRAME hasn't a property with name PROP or if PROP has
-no value of TYPE (always string in the MS Windows case).  */)
+Return value is nil if FRAME doesn't have a property with name PROP or
+if PROP has no value of TYPE (always a string in the MS Windows case). */)
   (Lisp_Object prop, Lisp_Object frame, Lisp_Object type,
-   Lisp_Object source, Lisp_Object delete_p, Lisp_Object vector_ret_p)
+   Lisp_Object window_id, Lisp_Object delete_p, Lisp_Object vector_ret_p)
 {
   struct frame *f = decode_window_system_frame (frame);
   Atom prop_atom;
@@ -5944,11 +6082,11 @@ no value of TYPE (always string in the MS Windows case).  */)
 
   CHECK_STRING (prop);
 
-  if (! NILP (source))
+  if (! NILP (window_id))
     {
-      CONS_TO_INTEGER (source, Window, target_window);
+      CONS_TO_INTEGER (window_id, Window, target_window);
       if (! target_window)
-	target_window = FRAME_DISPLAY_INFO (f)->root_window;
+        target_window = FRAME_DISPLAY_INFO (f)->root_window;
     }
 
   block_input ();
@@ -5970,7 +6108,7 @@ no value of TYPE (always string in the MS Windows case).  */)
                                          &found);
   if (NILP (prop_value)
       && ! found
-      && NILP (source)
+      && NILP (window_id)
       && target_window != FRAME_OUTER_WINDOW (f))
     {
       prop_value = x_window_property_intern (f,
@@ -5991,17 +6129,20 @@ DEFUN ("x-window-property-attributes", Fx_window_property_attributes, Sx_window_
        1, 3, 0,
        doc: /* Retrieve metadata about window property PROP on FRAME.
 If FRAME is nil or omitted, use the selected frame.
-If SOURCE is non-nil, get the property on that window instead of from
-FRAME.  The number 0 denotes the root window.
+If WINDOW-ID is non-nil, get the property of that window instead of
+ FRAME's X window; the number 0 denotes the root window.  This
+ argument is separate from FRAME because window IDs are not unique
+ across X displays or screens on the same display, so FRAME provides
+ context for the window ID.
 
-Return value is nil if FRAME hasn't a property with name PROP.
+Return value is nil if FRAME doesn't have a property named PROP.
 Otherwise, the return value is a vector with the following fields:
 
 0. The property type, as an integer.  The symbolic name of
  the type can be obtained with `x-get-atom-name'.
 1. The format of each element; one of 8, 16, or 32.
 2. The length of the property, in number of elements. */)
-  (Lisp_Object prop, Lisp_Object frame, Lisp_Object source)
+  (Lisp_Object prop, Lisp_Object frame, Lisp_Object window_id)
 {
   struct frame *f = decode_window_system_frame (frame);
   Window target_window = FRAME_X_WINDOW (f);
@@ -6015,9 +6156,9 @@ Otherwise, the return value is a vector with the following fields:
 
   CHECK_STRING (prop);
 
-  if (! NILP (source))
+  if (! NILP (window_id))
     {
-      CONS_TO_INTEGER (source, Window, target_window);
+      CONS_TO_INTEGER (window_id, Window, target_window);
       if (! target_window)
 	target_window = FRAME_DISPLAY_INFO (f)->root_window;
     }
@@ -6031,7 +6172,7 @@ Otherwise, the return value is a vector with the following fields:
 			   &bytes_remaining, &tmp_data);
   if (rc == Success          /* no invalid params */
       && actual_format == 0  /* but prop not found */
-      && NILP (source)
+      && NILP (window_id)
       && target_window != FRAME_OUTER_WINDOW (f))
     {
       /* analogous behavior to x-window-property: if property isn't found
@@ -6292,7 +6433,7 @@ x_create_tip_frame (struct x_display_info *dpyinfo, Lisp_Object parms)
                          "inhibitDoubleBuffering", "InhibitDoubleBuffering",
                          RES_TYPE_BOOLEAN);
 
-  gui_figure_window_size (f, parms, false, &x_width, &x_height);
+  gui_figure_window_size (f, parms, false, false, &x_width, &x_height);
 
   {
     XSetWindowAttributes attrs;
@@ -7633,6 +7774,7 @@ frame_parm_handler x_frame_parm_handlers[] =
   gui_set_vertical_scroll_bars,
   gui_set_horizontal_scroll_bars,
   gui_set_visibility,
+  x_set_tab_bar_lines,
   x_set_tool_bar_lines,
   x_set_scroll_bar_foreground,
   x_set_scroll_bar_background,

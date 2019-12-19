@@ -192,6 +192,10 @@ Tests that are expected to fail can be marked as such
 using :expected-result.  See `ert-test-result-type-p' for a
 description of valid values for RESULT-TYPE.
 
+Macros in BODY are expanded when the test is defined, not when it
+is run.  If a macro (possibly with side effects) is to be tested,
+it has to be wrapped in `(eval (quote ...))'.
+
 \(fn NAME () [DOCSTRING] [:expected-result RESULT-TYPE] \
 [:tags \\='(TAG...)] BODY...)"
   (declare (debug (&define :name test
@@ -512,6 +516,11 @@ Returns nil if they are."
                      (cl-assert (equal a b) t)
                      nil))))))))
       ((pred arrayp)
+       ;; For mixed unibyte/multibyte string comparisons, make both multibyte.
+       (when (and (stringp a)
+                  (xor (multibyte-string-p a) (multibyte-string-p b)))
+         (setq a (string-to-multibyte a))
+         (setq b (string-to-multibyte b)))
        (if (/= (length a) (length b))
            `(arrays-of-different-length ,(length a) ,(length b)
                                         ,a ,b
@@ -1351,15 +1360,13 @@ Returns the stats object."
           (let ((unexpected (ert-stats-completed-unexpected stats))
                 (skipped (ert-stats-skipped stats))
 		(expected-failures (ert--stats-failed-expected stats)))
-            (message "\n%sRan %s tests, %s results as expected%s%s (%s, %f sec)%s\n"
+            (message "\n%sRan %s tests, %s results as expected, %s unexpected%s (%s, %f sec)%s\n"
                      (if (not abortedp)
                          ""
                        "Aborted: ")
                      (ert-stats-total stats)
                      (ert-stats-completed-expected stats)
-                     (if (zerop unexpected)
-                         ""
-                       (format ", %s unexpected" unexpected))
+                     unexpected
                      (if (zerop skipped)
                          ""
                        (format ", %s skipped" skipped))
@@ -1505,9 +1512,10 @@ Ran \\([0-9]+\\) tests, \\([0-9]+\\) results as expected\
             (setq nrun (+ nrun (string-to-number (match-string 2)))
                   nexpected (+ nexpected (string-to-number (match-string 3))))
             (when (match-string 4)
-              (push logfile unexpected)
-              (setq nunexpected (+ nunexpected
-                                   (string-to-number (match-string 4)))))
+	      (let ((n (string-to-number (match-string 4))))
+		(unless (zerop n)
+		  (push logfile unexpected)
+		  (setq nunexpected (+ nunexpected n)))))
             (when (match-string 5)
               (push logfile skipped)
               (setq nskipped (+ nskipped
@@ -2092,7 +2100,9 @@ and how to display message."
 ;;; Commands and button actions for the results buffer.
 
 (define-derived-mode ert-results-mode special-mode "ERT-Results"
-  "Major mode for viewing results of ERT test runs.")
+  "Major mode for viewing results of ERT test runs."
+  (setq-local revert-buffer-function
+              (lambda (&rest _) (ert-results-rerun-all-tests))))
 
 (cl-loop for (key binding) in
          '( ;; Stuff that's not in the menu.

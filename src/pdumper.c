@@ -105,8 +105,6 @@ along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
 # define VM_SUPPORTED 0
 #endif
 
-#define DANGEROUS 0
-
 /* PDUMPER_CHECK_REHASHING being true causes the portable dumper to
    check, for each hash table it dumps, that the hash table means the
    same thing after rehashing.  */
@@ -118,10 +116,10 @@ along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
 # endif
 #endif
 
-/* We require an architecture in which all pointers are the same size
-   and have the same layout, where pointers are either 32 or 64 bits
-   long, and where bytes have eight bits --- that is, a
-   general-purpose computer made after 1990.  */
+/* Require an architecture in which pointers, ptrdiff_t and intptr_t
+   are the same size and have the same layout, and where bytes have
+   eight bits --- that is, a general-purpose computer made after 1990.
+   Also require Lisp_Object to be at least as wide as pointers.  */
 verify (sizeof (ptrdiff_t) == sizeof (void *));
 verify (sizeof (intptr_t) == sizeof (ptrdiff_t));
 verify (sizeof (void (*) (void)) == sizeof (void *));
@@ -129,7 +127,11 @@ verify (sizeof (ptrdiff_t) <= sizeof (Lisp_Object));
 verify (sizeof (ptrdiff_t) <= sizeof (EMACS_INT));
 verify (CHAR_BIT == 8);
 
-#define DIVIDE_ROUND_UP(x, y) (((x) + (y) - 1) / (y))
+static size_t
+divide_round_up (size_t x, size_t y)
+{
+  return (x + y - 1) / y;
+}
 
 static const char dump_magic[16] = {
   'D', 'U', 'M', 'P', 'E', 'D',
@@ -235,9 +237,12 @@ enum emacs_reloc_type
     RELOC_EMACS_EMACS_LV,
   };
 
-#define EMACS_RELOC_TYPE_BITS 3
-#define EMACS_RELOC_LENGTH_BITS                         \
-  (sizeof (dump_off) * CHAR_BIT - EMACS_RELOC_TYPE_BITS)
+enum
+  {
+   EMACS_RELOC_TYPE_BITS = 3,
+   EMACS_RELOC_LENGTH_BITS = (sizeof (dump_off) * CHAR_BIT
+			      - EMACS_RELOC_TYPE_BITS)
+  };
 
 struct emacs_reloc
 {
@@ -274,19 +279,22 @@ struct dump_table_locator
   dump_off nr_entries;
 };
 
-#define DUMP_RELOC_TYPE_BITS 5
+enum
+  {
+   DUMP_RELOC_TYPE_BITS = 5,
+   DUMP_RELOC_ALIGNMENT_BITS = 2,
+
+   /* Minimum alignment required by dump file format.  */
+   DUMP_RELOCATION_ALIGNMENT = 1 << DUMP_RELOC_ALIGNMENT_BITS,
+
+   /* The alignment granularity (in bytes) for objects we store in the
+      dump.  Always suitable for heap objects; may be more aligned.  */
+   DUMP_ALIGNMENT = max (GCALIGNMENT, DUMP_RELOCATION_ALIGNMENT),
+
+   DUMP_RELOC_OFFSET_BITS = sizeof (dump_off) * CHAR_BIT - DUMP_RELOC_TYPE_BITS
+  };
+
 verify (RELOC_DUMP_TO_EMACS_LV + 8 < (1 << DUMP_RELOC_TYPE_BITS));
-
-#define DUMP_RELOC_ALIGNMENT_BITS 2
-#define DUMP_RELOC_OFFSET_BITS                          \
-  (sizeof (dump_off) * CHAR_BIT - DUMP_RELOC_TYPE_BITS)
-
-/* Minimum alignment required by dump file format.  */
-#define DUMP_RELOCATION_ALIGNMENT (1<<DUMP_RELOC_ALIGNMENT_BITS)
-
-/* The alignment granularity (in bytes) for objects we store in the
-   dump.  Always suitable for heap objects; may be more aligned.  */
-#define DUMP_ALIGNMENT (max (GCALIGNMENT, DUMP_RELOCATION_ALIGNMENT))
 verify (DUMP_ALIGNMENT >= GCALIGNMENT);
 
 struct dump_reloc
@@ -333,8 +341,8 @@ dump_fingerprint (char const *label,
   fprintf (stderr, "%s: %.*s\n", label, hexbuf_size, hexbuf);
 }
 
-/* Format of an Emacs portable dump file.  All offsets are relative to
-   the beginning of the file.  An Emacs portable dump file is coupled
+/* Format of an Emacs dump file.  All offsets are relative to
+   the beginning of the file.  An Emacs dump file is coupled
    to exactly the Emacs binary that produced it, so details of
    alignment and endianness are unimportant.
 
@@ -572,23 +580,17 @@ enum dump_object_special_offset
   };
 
 /* Weights for score scores for object non-locality.  */
-enum link_weight_enum
-  {
-    WEIGHT_NONE_VALUE = 0,
-    WEIGHT_NORMAL_VALUE = 1000,
-    WEIGHT_STRONG_VALUE = 1200,
-  };
 
 struct link_weight
 {
   /* Wrapped in a struct to break unwanted implicit conversion.  */
-  enum link_weight_enum value;
+  int value;
 };
 
-#define LINK_WEIGHT_LITERAL(x) ((struct link_weight){.value=(x)})
-#define WEIGHT_NONE LINK_WEIGHT_LITERAL (WEIGHT_NONE_VALUE)
-#define WEIGHT_NORMAL LINK_WEIGHT_LITERAL (WEIGHT_NORMAL_VALUE)
-#define WEIGHT_STRONG LINK_WEIGHT_LITERAL (WEIGHT_STRONG_VALUE)
+static struct link_weight const
+  WEIGHT_NONE = { .value = 0 },
+  WEIGHT_NORMAL = { .value = 1000 },
+  WEIGHT_STRONG = { .value = 1200 };
 
 
 /* Dump file creation */
@@ -628,35 +630,27 @@ dump_set_have_current_referrer (struct dump_context *ctx, bool have)
 #endif
 }
 
-/* Remember the reason objects are enqueued.
+/* Return true if objects should be enqueued in CTX to refer to an
+   object that the caller should store into CTX->current_referrer.
 
-   Until DUMP_CLEAR_REFERRER is called, any objects enqueued are being
-   enqueued because OBJECT refers to them.  It is not legal to enqueue
-   objects without a referer set.  We check this constraint
+   Until dump_clear_referrer is called, any objects enqueued are being
+   enqueued because the object refers to them.  It is not valid to
+   enqueue objects without a referrer set.  We check this constraint
    at runtime.
 
-   It is illegal to call DUMP_SET_REFERRER twice without an
-   intervening call to DUMP_CLEAR_REFERRER.
+   It is invalid to call dump_set_referrer twice without an
+   intervening call to dump_clear_referrer.  */
+static bool
+dump_set_referrer (struct dump_context *ctx)
+{
+  eassert (!ctx->have_current_referrer);
+  dump_set_have_current_referrer (ctx, true);
+  return dump_tracking_referrers_p (ctx);
+}
 
-   Define as a macro so we can avoid evaluating OBJECT
-   if we dont want referrer tracking.  */
-#define DUMP_SET_REFERRER(ctx, object)                   \
-  do                                                     \
-    {                                                    \
-      struct dump_context *_ctx = (ctx);                 \
-      eassert (!_ctx->have_current_referrer);            \
-      dump_set_have_current_referrer (_ctx, true);       \
-      if (dump_tracking_referrers_p (_ctx))              \
-        ctx->current_referrer = (object);                \
-    }                                                    \
-  while (0)
-
-/* Unset the referer that DUMP_SET_REFERRER set.
-
-   Named with upper-case letters for symmetry with
-   DUMP_SET_REFERRER.  */
+/* Unset the referrer that dump_set_referrer prepared for.  */
 static void
-DUMP_CLEAR_REFERRER (struct dump_context *ctx)
+dump_clear_referrer (struct dump_context *ctx)
 {
   eassert (ctx->have_current_referrer);
   dump_set_have_current_referrer (ctx, false);
@@ -719,12 +713,7 @@ emacs_offset (const void *emacs_ptr)
 static bool
 dump_builtin_symbol_p (Lisp_Object object)
 {
-  if (!SYMBOLP (object))
-    return false;
-  char *bp = (char *) lispsym;
-  struct Lisp_Symbol *s = XSYMBOL (object);
-  char *sp = (char *) s;
-  return bp <= sp && sp < bp + sizeof (lispsym);
+  return SYMBOLP (object) && c_symbol_p (XSYMBOL (object));
 }
 
 /* Return whether OBJECT has the same bit pattern in all Emacs
@@ -737,34 +726,36 @@ dump_object_self_representing_p (Lisp_Object object)
   return FIXNUMP (object) || dump_builtin_symbol_p (object);
 }
 
-#define DEFINE_FROMLISP_FUNC(fn, type)          \
-  static type                                   \
-  fn (Lisp_Object value)                        \
-  {                                             \
-    ALLOW_IMPLICIT_CONVERSION;                  \
-    if (FIXNUMP (value))                        \
-      return XFIXNUM (value);                   \
-    eassert (BIGNUMP (value));                  \
-    type result;				\
-    if (TYPE_SIGNED (type))			\
-      result = bignum_to_intmax (value);	\
-    else					\
-      result = bignum_to_uintmax (value);	\
-    DISALLOW_IMPLICIT_CONVERSION;               \
-    return result;				\
-  }
+static intmax_t
+intmax_t_from_lisp (Lisp_Object value)
+{
+  intmax_t n;
+  bool ok = integer_to_intmax (value, &n);
+  eassert (ok);
+  return n;
+}
 
-#define DEFINE_TOLISP_FUNC(fn, type) \
-  static Lisp_Object                 \
-  fn (type value)                    \
-  {                                  \
-    return INT_TO_INTEGER (value);   \
-  }
+static Lisp_Object
+intmax_t_to_lisp (intmax_t value)
+{
+  return INT_TO_INTEGER (value);
+}
 
-DEFINE_FROMLISP_FUNC (intmax_t_from_lisp, intmax_t)
-DEFINE_TOLISP_FUNC (intmax_t_to_lisp, intmax_t)
-DEFINE_FROMLISP_FUNC (dump_off_from_lisp, dump_off)
-DEFINE_TOLISP_FUNC (dump_off_to_lisp, dump_off)
+static dump_off
+dump_off_from_lisp (Lisp_Object value)
+{
+  intmax_t n = intmax_t_from_lisp (value);
+  eassert (DUMP_OFF_MIN <= n && n <= DUMP_OFF_MAX);
+  ALLOW_IMPLICIT_CONVERSION;
+  return n;
+  DISALLOW_IMPLICIT_CONVERSION;
+}
+
+static Lisp_Object
+dump_off_to_lisp (dump_off value)
+{
+  return INT_TO_INTEGER (value);
+}
 
 static void
 dump_write (struct dump_context *ctx, const void *buf, dump_off nbyte)
@@ -1102,7 +1093,7 @@ dump_calc_link_score (dump_off basis,
   return powf (link_score, (float) link_weight / 1000.0f);
 }
 
-/* Compute the score score for a queued object.
+/* Compute the score for a queued object.
 
    OBJECT is the object to query, which must currently be queued for
    dumping.  BASIS is the offset at which we would be
@@ -1736,9 +1727,10 @@ dump_root_visitor (Lisp_Object const *root_ptr, enum gc_root_type type,
       eassert (dump_builtin_symbol_p (value));
       /* Remember to dump the object itself later along with all the
          rest of the copied-to-Emacs objects.  */
-      DUMP_SET_REFERRER (ctx, build_string ("built-in symbol list"));
+      if (dump_set_referrer (ctx))
+	ctx->current_referrer = build_string ("built-in symbol list");
       dump_enqueue_object (ctx, value, WEIGHT_NONE);
-      DUMP_CLEAR_REFERRER (ctx);
+      dump_clear_referrer (ctx);
     }
   else
     {
@@ -1748,9 +1740,11 @@ dump_root_visitor (Lisp_Object const *root_ptr, enum gc_root_type type,
                   ctx->staticpro_table);
       if (root_ptr != &Vinternal_interpreter_environment)
         {
-          DUMP_SET_REFERRER (ctx, dump_ptr_referrer ("emacs root", root_ptr));
+	  if (dump_set_referrer (ctx))
+	    ctx->current_referrer
+	      = dump_ptr_referrer ("emacs root", root_ptr);
           dump_emacs_reloc_to_lv (ctx, root_ptr, *root_ptr);
-          DUMP_CLEAR_REFERRER (ctx);
+          dump_clear_referrer (ctx);
         }
     }
 }
@@ -1764,7 +1758,7 @@ dump_roots (struct dump_context *ctx)
   visit_static_gc_roots (visitor);
 }
 
-#define PDUMPER_MAX_OBJECT_SIZE 2048
+enum { PDUMPER_MAX_OBJECT_SIZE = 2048 };
 
 static dump_off
 field_relpos (const void *in_start, const void *in_field)
@@ -1793,11 +1787,7 @@ cpyptr (void *out, const void *in)
 
 /* Convenience macro for regular assignment.  */
 #define DUMP_FIELD_COPY(out, in, name) \
-  do                                   \
-    {                                  \
-      (out)->name = (in)->name;        \
-    }                                  \
-  while (0)
+  ((out)->name = (in)->name)
 
 static void
 dump_field_lv_or_rawptr (struct dump_context *ctx,
@@ -1853,6 +1843,7 @@ dump_field_lv_or_rawptr (struct dump_context *ctx,
   intptr_t out_value;
   dump_off out_field_offset = ctx->obj_offset + relpos;
   dump_off target_offset = dump_recall_object (ctx, value);
+  enum { DANGEROUS = false };
   if (DANGEROUS
       && target_offset > 0 && dump_object_emacs_ptr (value) == NULL)
     {
@@ -2216,7 +2207,7 @@ dump_bignum (struct dump_context *ctx, Lisp_Object object)
   const struct Lisp_Bignum *bignum = XBIGNUM (object);
   START_DUMP_PVEC (ctx, &bignum->header, struct Lisp_Bignum, out);
   verify (sizeof (out->value) >= sizeof (struct bignum_reload_info));
-  dump_field_fixup_later (ctx, out, bignum, &bignum->value);
+  dump_field_fixup_later (ctx, out, bignum, xbignum_val (object));
   dump_off bignum_offset = finish_dump_pvec (ctx, &out->header);
   if (ctx->flags.dump_object_contents)
     {
@@ -2413,7 +2404,8 @@ dump_pre_dump_symbol (struct dump_context *ctx, struct Lisp_Symbol *symbol)
 {
   Lisp_Object symbol_lv = make_lisp_symbol (symbol);
   eassert (!dump_recall_symbol_aux (ctx, symbol_lv));
-  DUMP_SET_REFERRER (ctx, symbol_lv);
+  if (dump_set_referrer (ctx))
+    ctx->current_referrer = symbol_lv;
   switch (symbol->u.s.redirect)
     {
     case SYMBOL_LOCALIZED:
@@ -2427,7 +2419,7 @@ dump_pre_dump_symbol (struct dump_context *ctx, struct Lisp_Symbol *symbol)
     default:
       break;
     }
-  DUMP_CLEAR_REFERRER (ctx);
+  dump_clear_referrer (ctx);
 }
 
 static dump_off
@@ -2448,13 +2440,14 @@ dump_symbol (struct dump_context *ctx,
         {
 	  eassert (offset == DUMP_OBJECT_ON_NORMAL_QUEUE
 		   || offset == DUMP_OBJECT_NOT_SEEN);
-          DUMP_CLEAR_REFERRER (ctx);
+	  dump_clear_referrer (ctx);
           struct dump_flags old_flags = ctx->flags;
           ctx->flags.dump_object_contents = false;
           ctx->flags.defer_symbols = false;
           dump_object (ctx, object);
           ctx->flags = old_flags;
-          DUMP_SET_REFERRER (ctx, object);
+	  if (dump_set_referrer (ctx))
+	    ctx->current_referrer = object;
 
           offset = DUMP_OBJECT_ON_SYMBOL_QUEUE;
           dump_remember_object (ctx, object, offset);
@@ -2628,20 +2621,26 @@ dump_vectorlike_generic (struct dump_context *ctx,
 static bool
 dump_hash_table_stable_p (const struct Lisp_Hash_Table *hash)
 {
+  if (hash->test.hashfn == hashfn_user_defined)
+    error ("cannot dump hash tables with user-defined tests");  /* Bug#36769 */
   bool is_eql = hash->test.hashfn == hashfn_eql;
   bool is_equal = hash->test.hashfn == hashfn_equal;
   ptrdiff_t size = HASH_TABLE_SIZE (hash);
   for (ptrdiff_t i = 0; i < size; ++i)
-    if (!NILP (HASH_HASH (hash, i)))
-      {
-        Lisp_Object key =  HASH_KEY (hash, i);
-	bool key_stable = (dump_builtin_symbol_p (key)
-			   || FIXNUMP (key)
-			   || (is_equal && STRINGP (key))
-			   || ((is_equal || is_eql) && FLOATP (key)));
-        if (!key_stable)
-          return false;
-      }
+    {
+      Lisp_Object key =  HASH_KEY (hash, i);
+      if (!EQ (key, Qunbound))
+        {
+	  bool key_stable = (dump_builtin_symbol_p (key)
+			     || FIXNUMP (key)
+			     || (is_equal
+			         && (STRINGP (key) || BOOL_VECTOR_P (key)))
+			     || ((is_equal || is_eql)
+			         && (FLOATP (key) || BIGNUMP (key))));
+          if (!key_stable)
+            return false;
+        }
+    }
 
   return true;
 }
@@ -2653,8 +2652,11 @@ hash_table_contents (Lisp_Object table)
   Lisp_Object contents = Qnil;
   struct Lisp_Hash_Table *h = XHASH_TABLE (table);
   for (ptrdiff_t i = 0; i < HASH_TABLE_SIZE (h); ++i)
-    if (!NILP (HASH_HASH (h, i)))
-      dump_push (&contents, Fcons (HASH_KEY (h, i), HASH_VALUE (h, i)));
+    {
+      Lisp_Object key =  HASH_KEY (h, i);
+      if (!EQ (key, Qunbound))
+        dump_push (&contents, Fcons (key, HASH_VALUE (h, i)));
+    }
   return Fnreverse (contents);
 }
 
@@ -2663,13 +2665,14 @@ hash_table_contents (Lisp_Object table)
 static void
 check_hash_table_rehash (Lisp_Object table_orig)
 {
+  ptrdiff_t count = XHASH_TABLE (table_orig)->count;
   hash_rehash_if_needed (XHASH_TABLE (table_orig));
   Lisp_Object table_rehashed = Fcopy_hash_table (table_orig);
-  eassert (XHASH_TABLE (table_rehashed)->count >= 0);
-  XHASH_TABLE (table_rehashed)->count *= -1;
-  eassert (XHASH_TABLE (table_rehashed)->count <= 0);
+  eassert (!hash_rehash_needed_p (XHASH_TABLE (table_rehashed)));
+  XHASH_TABLE (table_rehashed)->hash = Qnil;
+  eassert (count == 0 || hash_rehash_needed_p (XHASH_TABLE (table_rehashed)));
   hash_rehash_if_needed (XHASH_TABLE (table_rehashed));
-  eassert (XHASH_TABLE (table_rehashed)->count >= 0);
+  eassert (!hash_rehash_needed_p (XHASH_TABLE (table_rehashed)));
   Lisp_Object expected_contents = hash_table_contents (table_orig);
   while (!NILP (expected_contents))
     {
@@ -2691,7 +2694,7 @@ dump_hash_table (struct dump_context *ctx,
                  Lisp_Object object,
                  dump_off offset)
 {
-#if CHECK_STRUCTS && !defined HASH_Lisp_Hash_Table_EF95ED06FF
+#if CHECK_STRUCTS && !defined HASH_Lisp_Hash_Table_12AFBF47AF
 # error "Lisp_Hash_Table changed. See CHECK_STRUCTS comment in config.h."
 #endif
   const struct Lisp_Hash_Table *hash_in = XHASH_TABLE (object);
@@ -2733,7 +2736,13 @@ dump_hash_table (struct dump_context *ctx,
      the need to rehash-on-access if we can load the dump where we
      want.  */
   if (hash->count > 0 && !is_stable)
-    hash->count = -hash->count;
+    /* Hash codes will have to be recomputed anyway, so let's not dump them.
+       Also set `hash` to nil for hash_rehash_needed_p.
+       We could also refrain from dumping the `next' and `index' vectors,
+       except that `next' is currently used for HASH_TABLE_SIZE and
+       we'd have to rebuild the next_free list as well as adjust
+       sweep_weak_hash_table for the case where there's no `index'.  */
+    hash->hash = Qnil;
 
   START_DUMP_PVEC (ctx, &hash->header, struct Lisp_Hash_Table, out);
   dump_pseudovector_lisp_fields (ctx, &out->header, &hash->header);
@@ -2741,7 +2750,8 @@ dump_hash_table (struct dump_context *ctx,
      them as close to the hash table as possible.  */
   DUMP_FIELD_COPY (out, hash, count);
   DUMP_FIELD_COPY (out, hash, next_free);
-  DUMP_FIELD_COPY (out, hash, pure);
+  DUMP_FIELD_COPY (out, hash, purecopy);
+  DUMP_FIELD_COPY (out, hash, mutable);
   DUMP_FIELD_COPY (out, hash, rehash_threshold);
   DUMP_FIELD_COPY (out, hash, rehash_size);
   dump_field_lv (ctx, out, hash, &hash->key_and_value, WEIGHT_STRONG);
@@ -2759,7 +2769,7 @@ dump_hash_table (struct dump_context *ctx,
 static dump_off
 dump_buffer (struct dump_context *ctx, const struct buffer *in_buffer)
 {
-#if CHECK_STRUCTS && !defined HASH_buffer_E34A11C6B9
+#if CHECK_STRUCTS && !defined HASH_buffer_375A10F5E5
 # error "buffer changed. See CHECK_STRUCTS comment in config.h."
 #endif
   struct buffer munged_buffer = *in_buffer;
@@ -3106,7 +3116,8 @@ dump_object (struct dump_context *ctx, Lisp_Object object)
     }
 
   /* Object needs to be dumped.  */
-  DUMP_SET_REFERRER (ctx, object);
+  if (dump_set_referrer (ctx))
+    ctx->current_referrer = object;
   switch (XTYPE (object))
     {
     case Lisp_String:
@@ -3130,7 +3141,7 @@ dump_object (struct dump_context *ctx, Lisp_Object object)
     default:
       emacs_abort ();
     }
-  DUMP_CLEAR_REFERRER (ctx);
+  dump_clear_referrer (ctx);
 
   /* offset can be < 0 if we've deferred an object.  */
   if (ctx->flags.dump_object_contents && offset > DUMP_OBJECT_NOT_SEEN)
@@ -3385,19 +3396,18 @@ dump_cold_buffer (struct dump_context *ctx, Lisp_Object data)
 static void
 dump_cold_bignum (struct dump_context *ctx, Lisp_Object object)
 {
-  const struct Lisp_Bignum *bignum = XBIGNUM (object);
-  size_t sz_nlimbs = mpz_size (bignum->value);
+  mpz_t const *n = xbignum_val (object);
+  size_t sz_nlimbs = mpz_size (*n);
   eassert (sz_nlimbs < DUMP_OFF_MAX);
   dump_align_output (ctx, alignof (mp_limb_t));
   dump_off nlimbs = (dump_off) sz_nlimbs;
   Lisp_Object descriptor
     = list2 (dump_off_to_lisp (ctx->offset),
-	     dump_off_to_lisp ((mpz_sgn (bignum->value) < 0
-				? -nlimbs : nlimbs)));
+	     dump_off_to_lisp (mpz_sgn (*n) < 0 ? -nlimbs : nlimbs));
   Fputhash (object, descriptor, ctx->bignum_data);
   for (mp_size_t i = 0; i < nlimbs; ++i)
     {
-      mp_limb_t limb = mpz_getlimbn (bignum->value, i);
+      mp_limb_t limb = mpz_getlimbn (*n, i);
       dump_write (ctx, &limb, sizeof (limb));
     }
 }
@@ -3496,9 +3506,10 @@ dump_drain_user_remembered_data_hot (struct dump_context *ctx)
           read_ptr_raw_and_lv (mem, type, &value, &lv);
           if (value != NULL)
             {
-              DUMP_SET_REFERRER (ctx, dump_ptr_referrer ("user data", mem));
+	      if (dump_set_referrer (ctx))
+		ctx->current_referrer = dump_ptr_referrer ("user data", mem);
               dump_enqueue_object (ctx, lv, WEIGHT_NONE);
-              DUMP_CLEAR_REFERRER (ctx);
+	      dump_clear_referrer (ctx);
             }
         }
     }
@@ -3656,8 +3667,7 @@ dump_check_overlap_dump_reloc (Lisp_Object lreloc_a,
 static struct emacs_reloc
 decode_emacs_reloc (struct dump_context *ctx, Lisp_Object lreloc)
 {
-  struct emacs_reloc reloc;
-  memset (&reloc, 0, sizeof (reloc));
+  struct emacs_reloc reloc = {0};
   ALLOW_IMPLICIT_CONVERSION;
   int type = XFIXNUM (dump_pop (&lreloc));
   DISALLOW_IMPLICIT_CONVERSION;
@@ -3816,8 +3826,7 @@ drain_reloc_list (struct dump_context *ctx,
   *reloc_list = Qnil;
   dump_align_output (ctx, max (alignof (struct dump_reloc),
 			       alignof (struct emacs_reloc)));
-  struct dump_table_locator locator;
-  memset (&locator, 0, sizeof (locator));
+  struct dump_table_locator locator = {0};
   locator.offset = ctx->offset;
   for (; !NILP (relocs); locator.nr_entries += 1)
     {
@@ -3987,7 +3996,7 @@ dump_drain_deferred_symbols (struct dump_context *ctx)
 DEFUN ("dump-emacs-portable",
        Fdump_emacs_portable, Sdump_emacs_portable,
        1, 2, 0,
-       doc: /* Dump current state of Emacs into portable dump file FILENAME.
+       doc: /* Dump current state of Emacs into dump file FILENAME.
 If TRACK-REFERRERS is non-nil, keep additional debugging information
 that can help track down the provenance of unsupported object
 types.  */)
@@ -4027,9 +4036,8 @@ types.  */)
   filename = Fexpand_file_name (filename, Qnil);
   filename = ENCODE_FILE (filename);
 
-  struct dump_context ctx_buf;
+  struct dump_context ctx_buf = {0};
   struct dump_context *ctx = &ctx_buf;
-  memset (ctx, 0, sizeof (*ctx));
   ctx->fd = -1;
 
   ctx->objects_dumped = make_eq_hash_table ();
@@ -4726,7 +4734,7 @@ dump_mmap_release_vm (struct dump_memory_map *map)
 static bool
 needs_mmap_retry_p (void)
 {
-#if defined (CYGWIN) || VM_SUPPORTED == VM_MS_WINDOWS
+#if defined CYGWIN || VM_SUPPORTED == VM_MS_WINDOWS || defined _AIX
   return true;
 #else
   return false;
@@ -4869,7 +4877,7 @@ dump_bitset_init (struct dump_bitset *bitset, size_t number_bits)
 {
   int xword_size = sizeof (bitset->bits[0]);
   int bits_per_word = xword_size * CHAR_BIT;
-  ptrdiff_t words_needed = DIVIDE_ROUND_UP (number_bits, bits_per_word);
+  ptrdiff_t words_needed = divide_round_up (number_bits, bits_per_word);
   bitset->number_words = words_needed;
   bitset->bits = calloc (words_needed, xword_size);
   return bitset->bits != NULL;
@@ -4922,9 +4930,10 @@ dump_bitset_set_bit (struct dump_bitset *bitset, size_t bit_number)
 static void
 dump_bitset_clear (struct dump_bitset *bitset)
 {
-  int xword_size = sizeof (bitset->bits[0]);
+  /* Skip the memset if bitset->number_words == 0, because then bitset->bits
+     might be NULL and the memset would have undefined behavior.  */
   if (bitset->number_words)
-    memset (bitset->bits, 0, bitset->number_words * xword_size);
+    memset (bitset->bits, 0, bitset->number_words * sizeof bitset->bits[0]);
 }
 
 struct pdumper_loaded_dump_private
@@ -5048,7 +5057,7 @@ pdumper_cold_object_p_impl (const void *obj)
   return offset >= dump_private.header.cold_start;
 }
 
-enum Lisp_Type
+int
 pdumper_find_object_type_impl (const void *obj)
 {
   eassert (pdumper_object_p (obj));
@@ -5058,7 +5067,7 @@ pdumper_find_object_type_impl (const void *obj)
   const struct dump_reloc *reloc =
     dump_find_relocation (&dump_private.header.object_starts, offset);
   return (reloc != NULL && dump_reloc_get_offset (*reloc) == offset)
-    ? (enum Lisp_Type) reloc->type
+    ? reloc->type
     : PDUMPER_NO_OBJECT;
 }
 
@@ -5195,8 +5204,8 @@ dump_do_dump_relocation (const uintptr_t dump_base,
       {
         struct Lisp_Bignum *bignum = dump_ptr (dump_base, reloc_offset);
         struct bignum_reload_info reload_info;
-        verify (sizeof (reload_info) <= sizeof (bignum->value));
-        memcpy (&reload_info, &bignum->value, sizeof (reload_info));
+        verify (sizeof (reload_info) <= sizeof (*bignum_val (bignum)));
+        memcpy (&reload_info, bignum_val (bignum), sizeof (reload_info));
         const mp_limb_t *limbs =
           dump_ptr (dump_base, reload_info.data_location);
         mpz_roinit_n (bignum->value, limbs, reload_info.nlimbs);
@@ -5294,7 +5303,7 @@ enum dump_section
 
    N.B. We run very early in initialization, so we can't use lisp,
    unwinding, xmalloc, and so on.  */
-enum pdumper_load_result
+int
 pdumper_load (const char *dump_filename)
 {
   intptr_t dump_size;
@@ -5319,10 +5328,15 @@ pdumper_load (const char *dump_filename)
   /* We can load only one dump.  */
   eassert (!dump_loaded_p ());
 
-  enum pdumper_load_result err = PDUMPER_LOAD_FILE_NOT_FOUND;
+  int err;
   int dump_fd = emacs_open (dump_filename, O_RDONLY, 0);
   if (dump_fd < 0)
-    goto out;
+    {
+      err = (errno == ENOENT || errno == ENOTDIR
+	     ? PDUMPER_LOAD_FILE_NOT_FOUND
+	     : PDUMPER_LOAD_ERROR + errno);
+      goto out;
+    }
 
   err = PDUMPER_LOAD_FILE_NOT_FOUND;
   if (fstat (dump_fd, &stat) < 0)
@@ -5411,7 +5425,7 @@ pdumper_load (const char *dump_filename)
 
   err = PDUMPER_LOAD_ERROR;
   mark_bits_needed =
-    DIVIDE_ROUND_UP (header->discardable_start, DUMP_ALIGNMENT);
+    divide_round_up (header->discardable_start, DUMP_ALIGNMENT);
   if (!dump_bitset_init (&mark_bits, mark_bits_needed))
     goto out;
 
@@ -5467,14 +5481,14 @@ pdumper_record_wd (const char *wd)
 
 DEFUN ("pdumper-stats", Fpdumper_stats, Spdumper_stats, 0, 0, 0,
        doc: /* Return statistics about portable dumping used by this session.
-If this Emacs sesion was started from a portable dump file,
+If this Emacs session was started from a dump file,
 the return value is an alist of the form:
 
   ((dumped-with-pdumper . t) (load-time . TIME) (dump-file-name . FILE))
 
 where TIME is the time in seconds it took to restore Emacs state
 from the dump file, and FILE is the name of the dump file.
-Value is nil if this session was not started using a portable dump file.*/)
+Value is nil if this session was not started using a dump file.*/)
      (void)
 {
   if (!dumped_with_pdumper_p ())

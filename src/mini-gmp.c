@@ -2,7 +2,7 @@
 
    Contributed to the GNU project by Niels Möller
 
-Copyright 1991-1997, 1999-2018 Free Software Foundation, Inc.
+Copyright 1991-1997, 1999-2019 Free Software Foundation, Inc.
 
 This file is part of the GNU MP Library.
 
@@ -295,7 +295,7 @@ gmp_default_alloc (size_t size)
 }
 
 static void *
-gmp_default_realloc (void *old, size_t old_size, size_t new_size)
+gmp_default_realloc (void *old, size_t unused_old_size, size_t new_size)
 {
   void * p;
 
@@ -308,7 +308,7 @@ gmp_default_realloc (void *old, size_t old_size, size_t new_size)
 }
 
 static void
-gmp_default_free (void *p, size_t size)
+gmp_default_free (void *p, size_t unused_size)
 {
   free (p);
 }
@@ -1595,7 +1595,7 @@ mpz_get_ui (const mpz_t u)
       int LOCAL_GMP_LIMB_BITS = GMP_LIMB_BITS;
       unsigned long r = 0;
       mp_size_t n = GMP_ABS (u->_mp_size);
-      n = GMP_MIN (n, 1 + (GMP_ULONG_BITS - 1) / GMP_LIMB_BITS);
+      n = GMP_MIN (n, 1 + (mp_size_t) (GMP_ULONG_BITS - 1) / GMP_LIMB_BITS);
       while (--n >= 0)
 	r = (r << LOCAL_GMP_LIMB_BITS) + u->_mp_d[n];
       return r;
@@ -3427,7 +3427,7 @@ gmp_lucas_mod (mpz_t V, mpz_t Qk, long Q,
       gmp_lucas_step_k_2k (V, Qk, n);
 
       /* A step k->k+1 is performed if the bit in $n$ is 1	*/
-      /* mpz_tstbit(n,bs) or the the bit is 0 in $n$ but	*/
+      /* mpz_tstbit(n,bs) or the bit is 0 in $n$ but	*/
       /* should be 1 in $n+1$ (bs == b0)			*/
       if (b0 == bs || mpz_tstbit (n, bs))
 	{
@@ -3499,7 +3499,7 @@ gmp_stronglucas (const mpz_t x, mpz_t Qk)
   b0 = mpz_scan0 (n, 0);
 
   /* D= P^2 - 4Q; P = 1; Q = (1-D)/4 */
-  Q = (D & 2) ? (D >> 2) + 1 : -(long) (D >> 2);
+  Q = (D & 2) ? (long) (D >> 2) + 1 : -(long) (D >> 2);
 
   if (! gmp_lucas_mod (V, Qk, Q, b0, n))	/* If Ud != 0 */
     while (V->_mp_size != 0 && --b0 != 0)	/* while Vk != 0 */
@@ -4492,7 +4492,7 @@ mpz_export (void *r, size_t *countp, int order, size_t size, int endian,
       ptrdiff_t word_step;
       /* The current (partial) limb. */
       mp_limb_t limb;
-      /* The number of bytes left to to in this limb. */
+      /* The number of bytes left to do in this limb. */
       size_t bytes;
       /* The index where the limb was read. */
       mp_size_t i;

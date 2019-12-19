@@ -44,6 +44,7 @@
 (require 'cl-lib)
 (require 'ring)
 (require 'time-date)
+(eval-when-compile (require 'subr-x))
 
 (defconst rcirc-id-string (concat "rcirc on GNU Emacs " emacs-version))
 
@@ -826,6 +827,7 @@ Function is called with PROCESS, COMMAND, SENDER, ARGS and LINE.")
     (process-send-string process string)))
 
 (defun rcirc-send-privmsg (process target string)
+  (cl-check-type target string)
   (rcirc-send-string process (format "PRIVMSG %s :%s" target string)))
 
 (defun rcirc-send-ctcp (process target request &optional args)
@@ -1181,6 +1183,8 @@ with it."
                rcirc-log-directory)
       (rcirc-log-write))
     (rcirc-clean-up-buffer "Killed buffer")
+    (when-let ((process (get-buffer-process (current-buffer))))
+      (delete-process process))
     (when (and rcirc-buffer-alist ;; it's a server buffer
                rcirc-kill-channel-buffers)
       (dolist (channel rcirc-buffer-alist)
@@ -2329,8 +2333,8 @@ With a prefix arg, prompt for new topic."
   (let ((timestamp (format-time-string "%s")))
     (rcirc-send-ctcp process target "PING" timestamp)))
 
-(defun rcirc-cmd-me (args &optional process target)
-  (rcirc-send-ctcp process target "ACTION" args))
+(defun rcirc-cmd-me (args process target)
+  (when target (rcirc-send-ctcp process target "ACTION" args)))
 
 (defun rcirc-add-or-remove (set &rest elements)
   (dolist (elt elements)
@@ -3060,7 +3064,7 @@ Passwords are stored in `rcirc-authinfo' (which see)."
 ;; When using M-x flyspell-mode, only check words after the prompt
 (put 'rcirc-mode 'flyspell-mode-predicate 'rcirc-looking-at-input)
 (defun rcirc-looking-at-input ()
-  "Returns true if point is past the input marker."
+  "Return true if point is past the input marker."
   (>= (point) rcirc-prompt-end-marker))
 
 

@@ -180,7 +180,6 @@ chasing all links both at the file level and at the levels of the
 containing directories."
   :type 'boolean
   :group 'find-file)
-(put 'find-file-visit-truename 'safe-local-variable 'booleanp)
 
 (defcustom revert-without-query nil
   "Specify which files should be reverted without query.
@@ -337,7 +336,11 @@ Any other non-nil value means ask user whether to add a newline, when saving.
 A value of nil means don't add newlines.
 
 Certain major modes set this locally to the value obtained
-from `mode-require-final-newline'."
+from `mode-require-final-newline'.
+
+This variable is only heeded when visiting files (or saving
+buffers into files they visit).  Writing data to the file system
+with `write-region' and the like is not influenced by this variable."
   :safe #'symbolp
   :type '(choice (const :tag "When visiting" visit)
 		 (const :tag "When saving" t)
@@ -812,13 +815,26 @@ The path separator is colon in GNU and GNU-like systems."
                  (lambda (f) (and (file-directory-p f) 'dir-ok)))
     (error "No such directory found via CDPATH environment variable"))))
 
-(defun directory-files-recursively (dir regexp &optional include-directories)
+(defun directory-files-recursively (dir regexp
+                                        &optional include-directories predicate
+                                        follow-symlinks)
   "Return list of all files under DIR that have file names matching REGEXP.
-This function works recursively.  Files are returned in \"depth first\"
-order, and files from each directory are sorted in alphabetical order.
-Each file name appears in the returned list in its absolute form.
-Optional argument INCLUDE-DIRECTORIES non-nil means also include in the
-output directories whose names match REGEXP."
+This function works recursively.  Files are returned in \"depth
+first\" order, and files from each directory are sorted in
+alphabetical order.  Each file name appears in the returned list
+in its absolute form.
+
+Optional argument INCLUDE-DIRECTORIES non-nil means also include
+in the output directories whose names match REGEXP.
+
+PREDICATE can be either nil (which means that all subdirectories
+are descended into), t (which means that subdirectories that
+can't be read are ignored), or a function (which is called with
+the name of the subdirectory and should return non-nil if the
+subdirectory is to be descended into).
+
+If FOLLOW-SYMLINKS, symbolic links that point to directories are
+followed.  Note that this can lead to infinite recursion."
   (let* ((result nil)
 	 (files nil)
          (dir (directory-file-name dir))
@@ -832,10 +848,23 @@ output directories whose names match REGEXP."
 	    (let* ((leaf (substring file 0 (1- (length file))))
 		   (full-file (concat dir "/" leaf)))
 	      ;; Don't follow symlinks to other directories.
-	      (unless (file-symlink-p full-file)
-		(setq result
-		      (nconc result (directory-files-recursively
-				     full-file regexp include-directories))))
+	      (when (and (or (not (file-symlink-p full-file))
+                             (and (file-symlink-p full-file)
+                                  follow-symlinks))
+                         ;; Allow filtering subdirectories.
+                         (or (eq predicate nil)
+                             (eq predicate t)
+                             (funcall predicate full-file)))
+                (let ((sub-files
+                       (if (eq predicate t)
+                           (ignore-error file-error
+                             (directory-files-recursively
+			      full-file regexp include-directories
+                              predicate follow-symlinks))
+                         (directory-files-recursively
+			  full-file regexp include-directories
+                          predicate follow-symlinks))))
+		  (setq result (nconc result sub-files))))
 	      (when (and include-directories
 			 (string-match regexp leaf))
 		(setq result (nconc result (list full-file)))))
@@ -1017,7 +1046,7 @@ directory if it does not exist."
 		     (setq errtype "access"))
 	       (with-file-modes ?\700
 		 (condition-case nil
-		     (make-directory user-emacs-directory)
+		     (make-directory user-emacs-directory t)
 		   (error (setq errtype "create")))))
 	     (when (and errtype
 			user-emacs-directory-warning
@@ -1393,12 +1422,28 @@ in all cases, since that is the standard symbol for byte."
                                (if (string= prefix "") "" "i")
                                (or unit "B"))
                             (concat prefix unit))))
-      (format (if (> (mod file-size 1.0) 0.05)
+      (format (if (and (>= (mod file-size 1.0) 0.05)
+                       (< (mod file-size 1.0) 0.95))
 		  "%.1f%s%s"
 	        "%.0f%s%s")
 	      file-size
               (if (string= prefixed-unit "") "" (or space ""))
               prefixed-unit))))
+
+(defun file-size-human-readable-iec (size)
+  "Human-readable string for SIZE bytes, using IEC prefixes."
+  (file-size-human-readable size 'iec " "))
+
+(defcustom byte-count-to-string-function #'file-size-human-readable-iec
+  "Function that turns a number of bytes into a human-readable string.
+It is for use when displaying file sizes and disk space where other
+constraints do not force a specific format."
+  :type '(radio
+          (function-item file-size-human-readable-iec)
+          (function-item file-size-human-readable)
+          (function :tag "Custom function" :value number-to-string))
+  :group 'files
+  :version "27.1")
 
 (defcustom mounted-file-systems
   (if (memq system-type '(windows-nt cygwin))
@@ -1893,11 +1938,6 @@ this function prepends a \"|\" to the final result if necessary."
 			     (concat "|" lastname)
 			   lastname))))
 
-(defun generate-new-buffer (name)
-  "Create and return a buffer with a name based on NAME.
-Choose the buffer's name using `generate-new-buffer-name'."
-  (get-buffer-create (generate-new-buffer-name name)))
-
 (defcustom automount-dir-prefix (purecopy "^/tmp_mnt/")
   "Regexp to match the automounter prefix in a directory name."
   :group 'files
@@ -2067,7 +2107,7 @@ think it does, because \"free\" is pretty hard to define in practice."
 (defun files--ask-user-about-large-file (size op-type filename offer-raw)
   (let ((prompt (format "File %s is large (%s), really %s?"
 		        (file-name-nondirectory filename)
-		        (file-size-human-readable size 'iec " ") op-type)))
+		        (funcall byte-count-to-string-function size) op-type)))
     (if (not offer-raw)
         (if (y-or-n-p prompt) nil 'abort)
       (let* ((use-dialog (and (display-popup-menus-p)
@@ -2091,9 +2131,9 @@ think it does, because \"free\" is pretty hard to define in practice."
   "If file SIZE larger than `large-file-warning-threshold', allow user to abort.
 OP-TYPE specifies the file operation being performed (for message
 to user).  If OFFER-RAW is true, give user the additional option
-to open the file literally. If the user chooses this option,
-`abort-if-file-too-large' returns the symbol `raw'. Otherwise, it
-returns nil or exits non-locally."
+to open the file literally.  If the user chooses this option,
+`abort-if-file-too-large' returns the symbol `raw'.  Otherwise,
+it returns nil or exits non-locally."
   (let ((choice (and large-file-warning-threshold size
 	             (> size large-file-warning-threshold)
                      ;; No point in warning if we can't read it.
@@ -2119,10 +2159,10 @@ returns nil or exits non-locally."
 exceeds the %S%% of currently available free memory (%s).
 If that fails, try to open it with `find-file-literally'
 \(but note that some characters might be displayed incorrectly)."
-	     (file-size-human-readable size 'iec " ")
+	     (funcall byte-count-to-string-function size)
 	     out-of-memory-warning-percentage
-	     (file-size-human-readable (* total-free-memory 1024)
-                                       'iec " "))))))))
+	     (funcall byte-count-to-string-function
+                      (* total-free-memory 1024)))))))))
 
 (defun files--message (format &rest args)
   "Like `message', except sometimes don't print to minibuffer.
@@ -2513,13 +2553,13 @@ unless NOMODES is non-nil."
       (auto-save-mode 1)))
   ;; Make people do a little extra work (C-x C-q)
   ;; before altering a backup file.
-  (when (backup-file-name-p buffer-file-name)
-    (setq buffer-read-only t))
   ;; When a file is marked read-only,
   ;; make the buffer read-only even if root is looking at it.
-  (when (and (file-modes (buffer-file-name))
-	     (zerop (logand (file-modes (buffer-file-name)) #o222)))
-    (setq buffer-read-only t))
+  (unless buffer-read-only
+    (when (or (backup-file-name-p buffer-file-name)
+	      (let ((modes (file-modes (buffer-file-name))))
+		(and modes (zerop (logand modes #o222)))))
+      (setq buffer-read-only t)))
   (unless nomodes
     (when (and view-read-only view-mode)
       (view-mode -1))
@@ -2678,6 +2718,8 @@ since only a single case-insensitive search through the alist is made."
      ("\\.bib\\'" . bibtex-mode)
      ("\\.bst\\'" . bibtex-style-mode)
      ("\\.sql\\'" . sql-mode)
+     ;; These .m4 files are Autoconf files.
+     ("\\(acinclude\\|aclocal\\|acsite\\)\\.m4\\'" . autoconf-mode)
      ("\\.m[4c]\\'" . m4-mode)
      ("\\.mf\\'" . metafont-mode)
      ("\\.mp\\'" . metapost-mode)
@@ -2724,7 +2766,7 @@ ARC\\|ZIP\\|LZH\\|LHA\\|ZOO\\|[JEW]AR\\|XPI\\|RAR\\|CBR\\|7Z\\)\\'" . archive-mo
      ;; https://en.wikipedia.org/wiki/.har
      ("\\.har\\'" . javascript-mode)
      ("\\.json\\'" . javascript-mode)
-     ("\\.[ds]?vh?\\'" . verilog-mode)
+     ("\\.[ds]?va?h?\\'" . verilog-mode)
      ("\\.by\\'" . bovine-grammar-mode)
      ("\\.wy\\'" . wisent-grammar-mode)
      ;; .emacs or .gnus or .viper following a directory delimiter in
@@ -2768,6 +2810,7 @@ ARC\\|ZIP\\|LZH\\|LHA\\|ZOO\\|[JEW]AR\\|XPI\\|RAR\\|CBR\\|7Z\\)\\'" . archive-mo
      ("\\.docbook\\'" . sgml-mode)
      ("\\.com\\'" . dcl-mode)
      ("/config\\.\\(?:bat\\|log\\)\\'" . fundamental-mode)
+     ("/\\.\\(authinfo\\|netrc\\)\\'" . authinfo-mode)
      ;; Windows candidates may be opened case sensitively on Unix
      ("\\.\\(?:[iI][nN][iI]\\|[lL][sS][tT]\\|[rR][eE][gG]\\|[sS][yY][sS]\\)\\'" . conf-mode)
      ("\\.la\\'" . conf-unix-mode)
@@ -2804,7 +2847,51 @@ ARC\\|ZIP\\|LZH\\|LHA\\|ZOO\\|[JEW]AR\\|XPI\\|RAR\\|CBR\\|7Z\\)\\'" . archive-mo
      ;; The following should come after the ChangeLog pattern
      ;; for the sake of ChangeLog.1, etc.
      ;; and after the .scm.[0-9] and CVS' <file>.<rev> patterns too.
-     ("\\.[1-9]\\'" . nroff-mode)))
+     ("\\.[1-9]\\'" . nroff-mode)
+     ;; Image file types probably supported by `image-convert'.
+     ("\\.art\\'" . image-mode)
+     ("\\.avs\\'" . image-mode)
+     ("\\.bmp\\'" . image-mode)
+     ("\\.cmyk\\'" . image-mode)
+     ("\\.cmyka\\'" . image-mode)
+     ("\\.crw\\'" . image-mode)
+     ("\\.dcr\\'" . image-mode)
+     ("\\.dcx\\'" . image-mode)
+     ("\\.dng\\'" . image-mode)
+     ("\\.dpx\\'" . image-mode)
+     ("\\.fax\\'" . image-mode)
+     ("\\.hrz\\'" . image-mode)
+     ("\\.icb\\'" . image-mode)
+     ("\\.icc\\'" . image-mode)
+     ("\\.icm\\'" . image-mode)
+     ("\\.ico\\'" . image-mode)
+     ("\\.icon\\'" . image-mode)
+     ("\\.jbg\\'" . image-mode)
+     ("\\.jbig\\'" . image-mode)
+     ("\\.jng\\'" . image-mode)
+     ("\\.jnx\\'" . image-mode)
+     ("\\.miff\\'" . image-mode)
+     ("\\.mng\\'" . image-mode)
+     ("\\.mvg\\'" . image-mode)
+     ("\\.otb\\'" . image-mode)
+     ("\\.p7\\'" . image-mode)
+     ("\\.pcx\\'" . image-mode)
+     ("\\.pdb\\'" . image-mode)
+     ("\\.pfa\\'" . image-mode)
+     ("\\.pfb\\'" . image-mode)
+     ("\\.picon\\'" . image-mode)
+     ("\\.pict\\'" . image-mode)
+     ("\\.rgb\\'" . image-mode)
+     ("\\.rgba\\'" . image-mode)
+     ("\\.tga\\'" . image-mode)
+     ("\\.wbmp\\'" . image-mode)
+     ("\\.webp\\'" . image-mode)
+     ("\\.wmf\\'" . image-mode)
+     ("\\.wpg\\'" . image-mode)
+     ("\\.xcf\\'" . image-mode)
+     ("\\.xmp\\'" . image-mode)
+     ("\\.xwd\\'" . image-mode)
+     ("\\.yuv\\'" . image-mode)))
   "Alist of filename patterns vs corresponding major mode functions.
 Each element looks like (REGEXP . FUNCTION) or (REGEXP FUNCTION NON-NIL).
 \(NON-NIL stands for anything that is not nil; the value does not matter.)
@@ -2945,9 +3032,9 @@ associated with that interpreter in `interpreter-mode-alist'.")
   "Alist of buffer beginnings vs. corresponding major mode functions.
 Each element looks like (REGEXP . FUNCTION) or (MATCH-FUNCTION . FUNCTION).
 After visiting a file, if REGEXP matches the text at the beginning of the
-buffer, or calling MATCH-FUNCTION returns non-nil, `normal-mode' will
-call FUNCTION rather than allowing `auto-mode-alist' to decide the buffer's
-major mode.
+buffer (case-sensitively), or calling MATCH-FUNCTION returns non-nil,
+`normal-mode' will call FUNCTION rather than allowing `auto-mode-alist' to
+decide the buffer's major mode.
 
 If FUNCTION is nil, then it is not called.  (That is a way of saying
 \"allow `auto-mode-alist' to decide for these files.\")")
@@ -2979,9 +3066,9 @@ If FUNCTION is nil, then it is not called.  (That is a way of saying
   "Like `magic-mode-alist' but has lower priority than `auto-mode-alist'.
 Each element looks like (REGEXP . FUNCTION) or (MATCH-FUNCTION . FUNCTION).
 After visiting a file, if REGEXP matches the text at the beginning of the
-buffer, or calling MATCH-FUNCTION returns non-nil, `normal-mode' will
-call FUNCTION, provided that `magic-mode-alist' and `auto-mode-alist'
-have not specified a mode for this file.
+buffer (case-sensitively), or calling MATCH-FUNCTION returns non-nil,
+`normal-mode' will call FUNCTION, provided that `magic-mode-alist' and
+`auto-mode-alist' have not specified a mode for this file.
 
 If FUNCTION is nil, then it is not called.")
 (put 'magic-fallback-mode-alist 'risky-local-variable t)
@@ -3098,7 +3185,8 @@ we don't actually set it to the same mode the buffer already has."
                              ((functionp re)
                               (funcall re))
                              ((stringp re)
-                              (looking-at re))
+                              (let ((case-fold-search nil))
+                                (looking-at re)))
                              (t
                               (error
                                "Problem in magic-mode-alist with element %s"
@@ -3159,7 +3247,8 @@ we don't actually set it to the same mode the buffer already has."
                                            ((functionp re)
                                             (funcall re))
                                            ((stringp re)
-                                            (looking-at re))
+                                            (let ((case-fold-search nil))
+                                              (looking-at re)))
                                            (t
                                             (error
                                              "Problem with magic-fallback-mode-alist element: %s"
@@ -3808,7 +3897,7 @@ It is dangerous if either of these conditions are met:
       (hack-one-local-variable-quotep exp)))
 
 (defun hack-one-local-variable-eval-safep (exp)
-  "Return t if it is safe to eval EXP when it is found in a file."
+  "Return non-nil if it is safe to eval EXP when it is found in a file."
   (or (not (consp exp))
       ;; Detect certain `put' expressions.
       (and (eq (car exp) 'put)
@@ -4132,8 +4221,8 @@ This function returns either:
 NODE is assumed to be a cons cell where the car is either a
 string or a symbol representing a mode name.
 
-If it is a mode then the the depth of the mode (ie, how many
-parents that mode has) will be returned.
+If it is a mode then the depth of the mode (ie, how many parents
+that mode has) will be returned.
 
 If it is a string then the length of the string plus 1000 will be
 returned.
@@ -4938,8 +5027,8 @@ Uses `backup-directory-alist' in the same way as
 	      (list (make-backup-file-name fn))
 	    (cons (format "%s.~%d~" basic-name (1+ high-water-mark))
 		  (if (and (> number-to-delete 0)
-			   ;; Delete nothing if there is overflow
-			   ;; in the number of versions to keep.
+			   ;; Delete nothing if kept-new-versions and
+			   ;; kept-old-versions combine to an outlandish value.
 			   (>= (+ kept-new-versions kept-old-versions -1) 0))
 		      (mapcar (lambda (n)
 				(format "%s.~%d~" basic-name n))
@@ -5348,6 +5437,8 @@ Before and after saving the buffer, this function runs
 (declare-function diff-no-select "diff"
 		  (old new &optional switches no-async buf))
 
+(defvar save-some-buffers--switch-window-callback nil)
+
 (defvar save-some-buffers-action-alist
   `((?\C-r
      ,(lambda (buf)
@@ -5359,6 +5450,11 @@ Before and after saving the buffer, this function runs
         ;; Return nil to ask about BUF again.
         nil)
      ,(purecopy "view this buffer"))
+    (?\C-f
+     ,(lambda (buf)
+        (funcall save-some-buffers--switch-window-callback buf)
+        (setq quit-flag t))
+     ,(purecopy "view this buffer and quit"))
     (?d ,(lambda (buf)
            (if (null (buffer-file-name buf))
                (message "Not applicable: no file")
@@ -5382,8 +5478,12 @@ Before and after saving the buffer, this function runs
 
 (defcustom save-some-buffers-default-predicate nil
   "Default predicate for `save-some-buffers'.
+
 This allows you to stop `save-some-buffers' from asking
-about certain files that you'd usually rather not save."
+about certain files that you'd usually rather not save.
+
+This function is called (with no parameters) from the buffer to
+be saved."
   :group 'auto-save
   ;; FIXME nil should not be a valid option, let alone the default,
   ;; eg so that add-function can be used.
@@ -5418,69 +5518,79 @@ change the additional actions you can take on files."
   (interactive "P")
   (unless pred
     (setq pred save-some-buffers-default-predicate))
-  (save-window-excursion
-    (let* (queried autosaved-buffers
-	   files-done abbrevs-done)
-      (dolist (buffer (buffer-list))
-	;; First save any buffers that we're supposed to save unconditionally.
-	;; That way the following code won't ask about them.
-	(with-current-buffer buffer
-	  (when (and buffer-save-without-query (buffer-modified-p))
-	    (push (buffer-name) autosaved-buffers)
-	    (save-buffer))))
-      ;; Ask about those buffers that merit it,
-      ;; and record the number thus saved.
-      (setq files-done
-	    (map-y-or-n-p
-             (lambda (buffer)
-	       ;; Note that killing some buffers may kill others via
-	       ;; hooks (e.g. Rmail and its viewing buffer).
-	       (and (buffer-live-p buffer)
-		    (buffer-modified-p buffer)
-                    (not (buffer-base-buffer buffer))
-                    (or
-                     (buffer-file-name buffer)
-                     (with-current-buffer buffer
-                       (or (eq buffer-offer-save 'always)
-                           (and pred buffer-offer-save (> (buffer-size) 0)))))
-                    (or (not (functionp pred))
-                        (with-current-buffer buffer (funcall pred)))
-                    (if arg
-                        t
-                      (setq queried t)
-                      (if (buffer-file-name buffer)
-                          (format "Save file %s? "
-                                  (buffer-file-name buffer))
-                        (format "Save buffer %s? "
-                                (buffer-name buffer))))))
-             (lambda (buffer)
-               (with-current-buffer buffer
-                 (save-buffer)))
-             (buffer-list)
-	     '("buffer" "buffers" "save")
-	     save-some-buffers-action-alist))
-      ;; Maybe to save abbrevs, and record whether
-      ;; we either saved them or asked to.
-      (and save-abbrevs abbrevs-changed
-	   (progn
-	     (if (or arg
-		     (eq save-abbrevs 'silently)
-		     (y-or-n-p (format "Save abbrevs in %s? " abbrev-file-name)))
-		 (write-abbrev-file nil))
-	     ;; Don't keep bothering user if he says no.
-	     (setq abbrevs-changed nil)
-	     (setq abbrevs-done t)))
-      (or queried (> files-done 0) abbrevs-done
-	  (cond
-	   ((null autosaved-buffers)
-            (when (called-interactively-p 'any)
-              (files--message "(No files need saving)")))
-	   ((= (length autosaved-buffers) 1)
-	    (files--message "(Saved %s)" (car autosaved-buffers)))
-	   (t
-	    (files--message "(Saved %d files: %s)"
-                            (length autosaved-buffers)
-                            (mapconcat 'identity autosaved-buffers ", "))))))))
+  (let* ((switched-buffer nil)
+         (save-some-buffers--switch-window-callback
+          (lambda (buffer)
+            (setq switched-buffer buffer)))
+         queried autosaved-buffers
+	 files-done abbrevs-done)
+    (unwind-protect
+        (save-window-excursion
+          (dolist (buffer (buffer-list))
+	    ;; First save any buffers that we're supposed to save
+	    ;; unconditionally.  That way the following code won't ask
+	    ;; about them.
+	    (with-current-buffer buffer
+	      (when (and buffer-save-without-query (buffer-modified-p))
+	        (push (buffer-name) autosaved-buffers)
+	        (save-buffer))))
+          ;; Ask about those buffers that merit it,
+          ;; and record the number thus saved.
+          (setq files-done
+	        (map-y-or-n-p
+                 (lambda (buffer)
+	           ;; Note that killing some buffers may kill others via
+	           ;; hooks (e.g. Rmail and its viewing buffer).
+	           (and (buffer-live-p buffer)
+		        (buffer-modified-p buffer)
+                        (not (buffer-base-buffer buffer))
+                        (or
+                         (buffer-file-name buffer)
+                         (with-current-buffer buffer
+                           (or (eq buffer-offer-save 'always)
+                               (and pred buffer-offer-save
+                                    (> (buffer-size) 0)))))
+                        (or (not (functionp pred))
+                            (with-current-buffer buffer (funcall pred)))
+                        (if arg
+                            t
+                          (setq queried t)
+                          (if (buffer-file-name buffer)
+                              (format "Save file %s? "
+                                      (buffer-file-name buffer))
+                            (format "Save buffer %s? "
+                                    (buffer-name buffer))))))
+                 (lambda (buffer)
+                   (with-current-buffer buffer
+                     (save-buffer)))
+                 (buffer-list)
+	         '("buffer" "buffers" "save")
+	         save-some-buffers-action-alist))
+          ;; Maybe to save abbrevs, and record whether
+          ;; we either saved them or asked to.
+          (and save-abbrevs abbrevs-changed
+	       (progn
+	         (if (or arg
+		         (eq save-abbrevs 'silently)
+		         (y-or-n-p (format "Save abbrevs in %s? "
+                                           abbrev-file-name)))
+		     (write-abbrev-file nil))
+	         ;; Don't keep bothering user if he says no.
+	         (setq abbrevs-changed nil)
+	         (setq abbrevs-done t)))
+          (or queried (> files-done 0) abbrevs-done
+	      (cond
+	       ((null autosaved-buffers)
+                (when (called-interactively-p 'any)
+                  (files--message "(No files need saving)")))
+	       ((= (length autosaved-buffers) 1)
+	        (files--message "(Saved %s)" (car autosaved-buffers)))
+	       (t
+	        (files--message
+                 "(Saved %d files: %s)" (length autosaved-buffers)
+                 (mapconcat 'identity autosaved-buffers ", "))))))
+      (when switched-buffer
+        (pop-to-buffer-same-window switched-buffer)))))
 
 (defun clear-visited-file-modtime ()
   "Clear out records of last mod time of visited file.
@@ -5885,7 +5995,7 @@ This returns non-nil if the current buffer is visiting a readable file
 whose modification time does not match that of the buffer.
 
 This function only handles buffers that are visiting files.
-Non-file buffers need a custom function"
+Non-file buffers need a custom function."
   (and buffer-file-name
        (file-readable-p buffer-file-name)
        (not (buffer-modified-p (current-buffer)))
@@ -6166,6 +6276,8 @@ an auto-save file."
 	   (after-find-file nil nil t))
 	  (t (user-error "Recover-file canceled")))))
 
+(defvar dired-mode-hook)
+
 (defun recover-session ()
   "Recover auto save files from a previous Emacs session.
 This command first displays a Dired buffer showing you the
@@ -6185,7 +6297,12 @@ Then you'll be asked about a number of files to recover."
                                (concat "\\`" (regexp-quote nd)))
 			     t)
       (error "No previous sessions to recover")))
-  (let ((ls-lisp-support-shell-wildcards t))
+  (require 'dired)
+  (let ((ls-lisp-support-shell-wildcards t)
+        ;; Ensure that we don't omit the session files as the user may
+        ;; have (as suggested by the manual) `dired-omit-mode' in the
+        ;; hook.
+        (dired-mode-hook (delete 'dired-omit-mode dired-mode-hook)))
     (dired (concat auto-save-list-file-prefix "*")
 	   (concat dired-listing-switches " -t")))
   (use-local-map (nconc (make-sparse-keymap) (current-local-map)))
@@ -6678,15 +6795,12 @@ This variable is obsolete; Emacs no longer uses it."
 			"27.1")
 
 (defun get-free-disk-space (dir)
-  "Return the amount of free space on directory DIR's file system.
-The return value is a string describing the amount of free
-space (normally, the number of free 1KB blocks).
-
+  "String describing the amount of free space on DIR's file system.
 If DIR's free space cannot be obtained, this function returns nil."
   (save-match-data
     (let ((avail (nth 2 (file-system-info dir))))
       (if avail
-	  (format "%.0f" (/ avail 1024))))))
+          (funcall byte-count-to-string-function avail)))))
 
 ;; The following expression replaces `dired-move-to-filename-regexp'.
 (defvar directory-listing-before-filename-regexp

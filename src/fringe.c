@@ -2152,7 +2152,8 @@ draw_fringe_bitmap_1 (struct window *w, struct glyph_row *row, int left_p, int o
   /* Clear left fringe if no bitmap to draw or if bitmap doesn't fill
      the fringe.  */
   p.bx = -1;
-  header_line_height = WINDOW_HEADER_LINE_HEIGHT (w);
+  header_line_height = WINDOW_TAB_LINE_HEIGHT (w)
+		       + WINDOW_HEADER_LINE_HEIGHT (w);
   p.by = WINDOW_TO_FRAME_PIXEL_Y (w, max (header_line_height, row->y));
   p.ny = row->visible_height;
   if (left_p)
@@ -2609,7 +2610,8 @@ update_window_fringes (struct window *w, bool keep_current_p)
 	      struct glyph_row *row1;
 	      int top_ind_max_y;
 
-	      top_ind_min_y = WINDOW_HEADER_LINE_HEIGHT (w);
+	      top_ind_min_y = WINDOW_TAB_LINE_HEIGHT (w)
+			      + WINDOW_HEADER_LINE_HEIGHT (w);
 	      top_ind_max_y = top_ind_min_y + fb->height;
 	      if (top_ind_max_y > yb)
 		top_ind_max_y = yb;
@@ -2666,8 +2668,10 @@ update_window_fringes (struct window *w, bool keep_current_p)
 
 	      bot_ind_max_y = row->y + row->visible_height;
 	      bot_ind_min_y = bot_ind_max_y - fb->height;
-	      if (bot_ind_min_y < WINDOW_HEADER_LINE_HEIGHT (w))
-		bot_ind_min_y = WINDOW_HEADER_LINE_HEIGHT (w);
+	      if (bot_ind_min_y < WINDOW_TAB_LINE_HEIGHT (w)
+				  + WINDOW_HEADER_LINE_HEIGHT (w))
+		bot_ind_min_y = WINDOW_TAB_LINE_HEIGHT (w)
+				+ WINDOW_HEADER_LINE_HEIGHT (w);
 
 	      for (y = row->y, rn = bot_ind_rn - 1;
 		   y >= bot_ind_min_y && rn >= 0;
@@ -3121,7 +3125,6 @@ If BITMAP already exists, the existing definition is replaced.  */)
   fb.bits = b = ((unsigned short *)
 		 ptr_bounds_clip (xfb + 1, fb.height * BYTES_PER_BITMAP_ROW));
   xfb = ptr_bounds_clip (xfb, sizeof *xfb);
-  memset (b, 0, fb.height);
 
   j = 0;
   while (j < fb.height)
@@ -3445,27 +3448,32 @@ init_fringe (void)
   fringe_faces = xzalloc (max_fringe_bitmaps * sizeof *fringe_faces);
 }
 
-#if defined (HAVE_NTGUI) || defined (USE_CAIRO)
-
 void
-#ifdef HAVE_NTGUI
-w32_init_fringe (struct redisplay_interface *rif)
-#else
-x_cr_init_fringe (struct redisplay_interface *rif)
-#endif
+gui_init_fringe (struct redisplay_interface *rif)
 {
   int bt;
 
-  if (!rif)
+  if (!rif || !rif->define_fringe_bitmap)
     return;
 
+  /* Set up the standard fringe bitmaps.  */
   for (bt = NO_FRINGE_BITMAP + 1; bt < MAX_STANDARD_FRINGE_BITMAPS; bt++)
     {
       struct fringe_bitmap *fb = &standard_bitmaps[bt];
       rif->define_fringe_bitmap (bt, fb->bits, fb->height, fb->width);
     }
+
+  /* Set up user-defined fringe bitmaps that might have been defined
+     before the frame of this kind was initialized.  This can happen
+     if Emacs is started as a daemon and the init files define fringe
+     bitmaps.  */
+  for ( ; bt < max_used_fringe_bitmap; bt++)
+    {
+      struct fringe_bitmap *fb = fringe_bitmaps[bt];
+      if (fb)
+	rif->define_fringe_bitmap (bt, fb->bits, fb->height, fb->width);
+    }
 }
-#endif
 
 #ifdef HAVE_NTGUI
 void
@@ -3475,7 +3483,7 @@ w32_reset_fringes (void)
   int bt;
   struct redisplay_interface *rif = FRAME_RIF (SELECTED_FRAME ());
 
-  if (!rif)
+  if (!rif || !rif->destroy_fringe_bitmap)
     return;
 
   for (bt = NO_FRINGE_BITMAP + 1; bt < max_used_fringe_bitmap; bt++)

@@ -596,9 +596,8 @@ process}.  After an asynchronous process is created, it runs in
 parallel with Emacs, and Emacs can communicate with it using the
 functions described in the following sections (@pxref{Input to
 Processes}, and @pxref{Output from Processes}).  Note that process
-communication is only partially asynchronous: Emacs sends data to the
-process only when certain functions are called, and Emacs accepts data
-from the process only while waiting for input or for a time delay.
+communication is only partially asynchronous: Emacs sends and receives
+data to and from a process only when those functions are called.
 
 @cindex pty, when to use for subprocess communications
 @cindex pipe, when to use for subprocess communications
@@ -1043,7 +1042,7 @@ this is either @code{nil}, which means the process is running or
 @end smallexample
 @end defun
 
-@defun process-contact process &optional key
+@defun process-contact process &optional key no-block
 This function returns information about how a network, a serial, or a
 pipe connection was set up.  When @var{key} is @code{nil}, it returns
 @code{(@var{hostname} @var{service})} for a network connection,
@@ -1087,6 +1086,11 @@ connection, see @code{make-pipe-process} for the list of keys.
 
 If @var{key} is a keyword, the function returns the value corresponding
 to that keyword.
+
+If @var{process} is a non-blocking network stream that hasn't been
+fully set up yet, then this function will block until that has
+happened.  If given the optional @var{no-block} parameter, this
+function will return @code{nil} instead of blocking.
 @end defun
 
 @defun process-id process
@@ -1245,8 +1249,9 @@ the defaulting mechanism (@pxref{Default Coding Systems}).
 because the input buffer is full.  When this happens, the send functions
 wait a short while, accepting output from subprocesses, and then try
 again.  This gives the subprocess a chance to read more of its pending
-input and make space in the buffer.  It also allows filters, sentinels
-and timers to run---so take account of that in writing your code.
+input and make space in the buffer.  It also allows filters (including
+the one currently running), sentinels and timers to run---so take
+account of that in writing your code.
 
   In these functions, the @var{process} argument can be a process or
 the name of a process, or a buffer or buffer name (which stands
@@ -1461,9 +1466,10 @@ output, Emacs won't receive that output.
 
   Output from a subprocess can arrive only while Emacs is waiting: when
 reading terminal input (see the function @code{waiting-for-user-input-p}),
-in @code{sit-for} and @code{sleep-for} (@pxref{Waiting}), and in
-@code{accept-process-output} (@pxref{Accepting Output}).  This
-minimizes the problem of timing errors that usually plague parallel
+in @code{sit-for} and @code{sleep-for} (@pxref{Waiting}), in
+@code{accept-process-output} (@pxref{Accepting Output}), and in
+functions which send data to processes (@pxref{Input to Processes}).
+This minimizes the problem of timing errors that usually plague parallel
 programming.  For example, you can safely create a process and only
 then specify its buffer or filter function; no output can arrive
 before you finish, if the code in between does not call any primitive
@@ -1639,14 +1645,10 @@ outputs directly to the process buffer.
   By default, the error output from the process, if any, is also
 passed to the filter function, unless the destination for the standard
 error stream of the process was separated from the standard output
-when the process was created (@pxref{Output from Processes}).
-
-  The filter function can only be called when Emacs is waiting for
-something, because process output arrives only at such times.  Emacs
-waits when reading terminal input (see the function
-@code{waiting-for-user-input-p}), in @code{sit-for} and
-@code{sleep-for} (@pxref{Waiting}), and in
-@code{accept-process-output} (@pxref{Accepting Output}).
+when the process was created.  Emacs will only call the filter
+function during certain function calls.  @xref{Output from Processes}.
+Note that if any of those functions are called by the filter, the
+filter may be called recursively.
 
   A filter function must accept two arguments: the associated process
 and a string, which is output just received from it.  The function is
@@ -2683,13 +2685,17 @@ the local host.  If you specify @var{host} for a server, it must
 specify a valid address for the local host, and only clients
 connecting to that address will be accepted.  When using @code{local},
 by default IPv4 will be used, specify a @var{family} of @code{ipv6} to
-override this.
+override this.  To listen on all interfaces, specify an address of
+@samp{"0.0.0.0"} for IPv4 or @samp{"::"} for IPv6.  Note that on some
+operating systems, listening on @samp{"::"} will also listen on IPv4,
+so attempting to then listen separately on IPv4 will result in
+@code{EADDRINUSE} errors (@samp{"Address already in use"}).
 
 @item :service @var{service}
 @var{service} specifies a port number to connect to; or, for a server,
 the port number to listen on.  It should be a service name like
-@samp{"http"} that translates to a port number, or an integer like @samp{80}
-or an integer string like @samp{"80"} that specifies the port number
+@samp{"https"} that translates to a port number, or an integer like @samp{443}
+or an integer string like @samp{"443"} that specifies the port number
 directly.  For a server, it can also be @code{t}, which means to let
 the system select an unused port number.
 
@@ -3008,6 +3014,21 @@ If the vector does not include the port number, @var{p}, or if
 @code{:@var{p}} suffix.
 @end defun
 
+@defun network-lookup-address-info name &optional family
+This function is used to perform hostname lookups on @var{name}, which
+is expected to be an ASCII-only string, otherwise an error is
+signaled. Call @code{puny-encode-domain} on @var{name}
+first if you wish to lookup internationalized hostnames.
+
+If successful it returns a list of Lisp representations of network
+addresses, otherwise it returns @code{nil}.
+
+By default both IPv4 and IPv6 lookups are attempted.  The optional
+argument @var{family} controls this behavior, specifying the symbol
+@code{ipv4} or @code{ipv6} restricts lookups to IPv4 and IPv6
+respectively.
+@end defun
+
 @node Serial Ports
 @section Communicating with Serial Ports
 @cindex @file{/dev/tty}
@@ -3038,7 +3059,7 @@ for a process object representing a serial port connection.
 
   Serial ports are available on GNU/Linux, Unix, and MS Windows systems.
 
-@deffn Command serial-term port speed
+@deffn Command serial-term port speed &optional line-mode
 Start a terminal-emulator for a serial port in a new buffer.
 @var{port} is the name of the serial port to connect to.  For
 example, this could be @file{/dev/ttyS0} on Unix.  On MS Windows, this
@@ -3051,6 +3072,8 @@ Lisp strings).
 is a common value.  The buffer is in Term mode; see @ref{Term Mode,,,
 emacs, The GNU Emacs Manual}, for the commands to use in that buffer.
 You can change the speed and the configuration in the mode line menu.
+If @var{line-mode} is non-@code{nil}, @code{term-line-mode} is used;
+otherwise @code{term-raw-mode} is used.
 @end deffn
 
 @defun make-serial-process &rest args

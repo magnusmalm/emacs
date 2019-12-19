@@ -127,7 +127,7 @@ after midnight UTC on absolute date ABS-DATE."
   "Return the time of the next time zone transition after TIME.
 Both TIME and the result are acceptable arguments to `current-time-zone'.
 Return nil if no such transition can be found."
-  (let* ((time (encode-time time 'integer))
+  (let* ((time (time-convert time 'integer))
          (time-zone (current-time-zone time))
          (time-utc-diff (car time-zone))
          hi
@@ -259,7 +259,7 @@ for `calendar-current-time-zone'."
                             (car t2-date-sec) t1-utc-diff))
                  (t1-time (/ (cdr t1-date-sec) 60))
                  (t2-time (/ (cdr t2-date-sec) 60)))
-            (if (nth 7 (decode-time t1))
+            (if (decoded-time-dst (decode-time t1))
                 (list (/ t0-utc-diff 60) (/ (- t1-utc-diff t0-utc-diff) 60)
                       t0-name t1-name t1-rules t2-rules t1-time t2-time)
               (list (/ t1-utc-diff 60) (/ (- t0-utc-diff t1-utc-diff) 60)
@@ -276,7 +276,7 @@ function `calendar-dst-find-startend'.")
   "Find the dates in YEAR on which daylight saving time starts and ends.
 Returns a list (YEAR START END), where START and END are
 expressions that when evaluated return the start and end dates,
-respectively. This function first attempts to use pre-calculated
+respectively.  This function first attempts to use pre-calculated
 data from `calendar-dst-transition-cache', otherwise it calls
 `calendar-dst-find-data' (and adds the results to the cache).
 If dates in YEAR cannot be handled by `encode-time' (e.g.,
@@ -291,7 +291,8 @@ the current year."
                    (condition-case nil
                        (encode-time 1 0 0 1 1 year)
                      (error
-                      (encode-time 1 0 0 1 1 (nth 5 (decode-time))))))
+                      (encode-time 1 0 0 1 1
+                                   (decoded-time-year (decode-time))))))
                 f (nth 4 e)
                 e (list year f (nth 5 e))
                 calendar-dst-transition-cache
